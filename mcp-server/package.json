@@ -1,0 +1,14 @@
+{
+  "name": "mongodb-mcp-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reverse proxy that fixes Flink MCP client content-type compatibility.",
+  "type": "module",
+  "main": "proxy.mjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'"
+  }
+}

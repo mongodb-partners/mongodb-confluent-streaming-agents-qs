@@ -1,0 +1,165 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mongodb-confluent-streaming-agents-qs"
+version = "1.0.0"
+description = "MongoDB Atlas + Confluent Streaming Agents Quickstart. Real-time data meets Agentic AI."
+readme = "README.md"
+authors = [
+    {name = "MongoDB", email = "mohammaddaoud.farooqi@mongodb.com"},
+]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+keywords = [
+    "mongodb", "atlas", "confluent", "kafka", "flink", "streaming", "agents",
+    "vector-search", "ai", "mcp", "inference", "embeddings", "bedrock", "openai",
+    "rag", "llm", "agentic-framework", "agentic-ai", "atlas-stream-processing"
+]
+requires-python = ">=3.10"
+
+# Core dependencies
+dependencies = [
+    "PyYAML>=6.0.1,<7.0",
+    "python-dotenv>=1.0.0,<2.0",
+    "urllib3>=1.26.18,<2.0",
+    "pymongo>=4.10.1",
+    "boto3>=1.26.0,<2.0",
+    "requests>=2.31.0",
+    "confluent-kafka[avro,schema-registry]>=2.3.0",
+    "questionary>=2.0.0",
+    "rich>=13.0.0",
+    "streamlit>=1.31.0",
+    "plotly>=5.18.0",
+    "pandas>=2.0.0",
+    "streamlit-autorefresh>=1.0.0",
+    "pydeck>=0.9.0",
+]
+
+# Optional dependencies for enhanced functionality
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-timeout>=2.2.0",
+    "pytest-order>=1.2.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+deploy = "scripts.deploy:main"
+destroy = "scripts.destroy:main"
+datagen = "scripts.datagen:main"
+asp-setup = "scripts.asp_setup:main"
+dashboard = "scripts.dashboard:main"
+publish_data = "scripts.publish_data:main"
+publish-data = "scripts.publish_data:main"
+mcp-deploy = "scripts.mcp_deploy:main"
+health = "scripts.health:main"
+preflight = "scripts.preflight:main"
+
+[project.urls]
+Homepage = "https://github.com/mongodb-partners/mongodb-confluent-streaming-agents-qs"
+Repository = "https://github.com/mongodb-partners/mongodb-confluent-streaming-agents-qs"
+Documentation = "https://github.com/mongodb-partners/mongodb-confluent-streaming-agents-qs#readme"
+Issues = "https://github.com/mongodb-partners/mongodb-confluent-streaming-agents-qs/issues"
+
+# Hatchling build configuration
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "scripts/",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "/.git",
+    "/.github",
+    "/terraform",
+    "/assets",
+    "*.pyc",
+    "__pycache__",
+]
+
+# Development tools configuration
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+  | \.venv
+  | \.env
+  | venv
+  | env
+  | __pycache__
+  | \.pytest_cache
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["testing"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "timeout: per-test deadline (provided by pytest-timeout)",
+]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "-s",
+]
+
+[dependency-groups]
+# PEP 735 dev dependency group. uv installs these by default when
+# `uv run` (or `uv sync`) runs in this project — unlike
+# [project.optional-dependencies], which require `uv sync --extra dev`.
+#
+# pytest-timeout MUST be in this group so the @pytest.mark.timeout(N)
+# markers on tests actually enforce a deadline. Previously the dependency
+# was under the optional `dev` extra, never installed by default, and the
+# marker was a silent no-op — defeating the hang-protection.
+dev = [
+    "playwright>=1.58.0",
+    "pytest-timeout>=2.2.0",
+]

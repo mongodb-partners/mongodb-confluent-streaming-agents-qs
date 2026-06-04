@@ -1,0 +1,250 @@
+[
+  {
+    "vessel_id": "VESSEL-10",
+    "vessel_name": "Missy",
+    "base_zone": "Uptown",
+    "availability": "in_dock",
+    "capacity": 6,
+    "current_zone": "Uptown"
+  },
+  {
+    "vessel_id": "VESSEL-11",
+    "vessel_name": "Lucky",
+    "base_zone": "Uptown",
+    "availability": "in_dock",
+    "capacity": 6,
+    "current_zone": "Uptown"
+  },
+  {
+    "vessel_id": "VESSEL-12",
+    "vessel_name": "Maggie",
+    "base_zone": "Uptown",
+    "availability": "in_dock",
+    "capacity": 6,
+    "current_zone": "Uptown"
+  },
+  {
+    "vessel_id": "VESSEL-13",
+    "vessel_name": "Brutus",
+    "base_zone": "Central Business District (CBD)",
+    "availability": "available",
+    "capacity": 9,
+    "current_zone": "Central Business District (CBD)"
+  },
+  {
+    "vessel_id": "VESSEL-14",
+    "vessel_name": "Scooter",
+    "base_zone": "Garden District",
+    "availability": "in_dock",
+    "capacity": 8,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-15",
+    "vessel_name": "Duke",
+    "base_zone": "Warehouse District",
+    "availability": "hired",
+    "capacity": 8,
+    "current_zone": "Warehouse District"
+  },
+  {
+    "vessel_id": "VESSEL-16",
+    "vessel_name": "Spike",
+    "base_zone": "Central Business District (CBD)",
+    "availability": "in_dock",
+    "capacity": 6,
+    "current_zone": "Central Business District (CBD)"
+  },
+  {
+    "vessel_id": "VESSEL-17",
+    "vessel_name": "Coco",
+    "base_zone": "Marigny",
+    "availability": "hired",
+    "capacity": 9,
+    "current_zone": "Marigny"
+  },
+  {
+    "vessel_id": "VESSEL-18",
+    "vessel_name": "Sammy",
+    "base_zone": "Bywater",
+    "availability": "hired",
+    "capacity": 7,
+    "current_zone": "Bywater"
+  },
+  {
+    "vessel_id": "VESSEL-19",
+    "vessel_name": "Dixie",
+    "base_zone": "Uptown",
+    "availability": "hired",
+    "capacity": 9,
+    "current_zone": "Uptown"
+  },
+  {
+    "vessel_id": "VESSEL-20",
+    "vessel_name": "Mia",
+    "base_zone": "Garden District",
+    "availability": "available",
+    "capacity": 9,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-21",
+    "vessel_name": "Lola",
+    "base_zone": "Warehouse District",
+    "availability": "hired",
+    "capacity": 9,
+    "current_zone": "Warehouse District"
+  },
+  {
+    "vessel_id": "VESSEL-22",
+    "vessel_name": "Buddy",
+    "base_zone": "Garden District",
+    "availability": "in_dock",
+    "capacity": 6,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-23",
+    "vessel_name": "Honey",
+    "base_zone": "Garden District",
+    "availability": "hired",
+    "capacity": 9,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-24",
+    "vessel_name": "Diamond",
+    "base_zone": "Marigny",
+    "availability": "in_dock",
+    "capacity": 6,
+    "current_zone": "Marigny"
+  },
+  {
+    "vessel_id": "VESSEL-25",
+    "vessel_name": "Lily",
+    "base_zone": "Bywater",
+    "availability": "hired",
+    "capacity": 6,
+    "current_zone": "Bywater"
+  },
+  {
+    "vessel_id": "VESSEL-26",
+    "vessel_name": "Lucky",
+    "base_zone": "Uptown",
+    "availability": "in_dock",
+    "capacity": 8,
+    "current_zone": "Uptown"
+  },
+  {
+    "vessel_id": "VESSEL-27",
+    "vessel_name": "Max",
+    "base_zone": "Garden District",
+    "availability": "in_dock",
+    "capacity": 7,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-28",
+    "vessel_name": "Lilly",
+    "base_zone": "Central Business District (CBD)",
+    "availability": "in_dock",
+    "capacity": 5,
+    "current_zone": "Central Business District (CBD)"
+  },
+  {
+    "vessel_id": "VESSEL-29",
+    "vessel_name": "Baby",
+    "base_zone": "Warehouse District",
+    "availability": "available",
+    "capacity": 5,
+    "current_zone": "Warehouse District"
+  },
+  {
+    "vessel_id": "VESSEL-30",
+    "vessel_name": "Charlie",
+    "base_zone": "Garden District",
+    "availability": "in_dock",
+    "capacity": 5,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-31",
+    "vessel_name": "Bella",
+    "base_zone": "Bywater",
+    "availability": "in_dock",
+    "capacity": 9,
+    "current_zone": "Bywater"
+  },
+  {
+    "vessel_id": "VESSEL-32",
+    "vessel_name": "Bandit",
+    "base_zone": "Marigny",
+    "availability": "available",
+    "capacity": 6,
+    "current_zone": "Marigny"
+  },
+  {
+    "vessel_id": "VESSEL-33",
+    "vessel_name": "Rascal",
+    "base_zone": "Uptown",
+    "availability": "available",
+    "capacity": 8,
+    "current_zone": "Uptown"
+  },
+  {
+    "vessel_id": "VESSEL-34",
+    "vessel_name": "Precious",
+    "base_zone": "Central Business District (CBD)",
+    "availability": "hired",
+    "capacity": 6,
+    "current_zone": "Central Business District (CBD)"
+  },
+  {
+    "vessel_id": "VESSEL-35",
+    "vessel_name": "Chico",
+    "base_zone": "Central Business District (CBD)",
+    "availability": "in_dock",
+    "capacity": 8,
+    "current_zone": "Central Business District (CBD)"
+  },
+  {
+    "vessel_id": "VESSEL-36",
+    "vessel_name": "Lilly",
+    "base_zone": "Garden District",
+    "availability": "available",
+    "capacity": 5,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-37",
+    "vessel_name": "Sassy",
+    "base_zone": "Garden District",
+    "availability": "in_dock",
+    "capacity": 7,
+    "current_zone": "Garden District"
+  },
+  {
+    "vessel_id": "VESSEL-38",
+    "vessel_name": "Bruno",
+    "base_zone": "Marigny",
+    "availability": "in_dock",
+    "capacity": 7,
+    "current_zone": "Marigny"
+  },
+  {
+    "vessel_id": "VESSEL-39",
+    "vessel_name": "Bandit",
+    "base_zone": "Bywater",
+    "availability": "hired",
+    "capacity": 6,
+    "current_zone": "Bywater"
+  },
+  {
+    "vessel_id": "VESSEL-40",
+    "vessel_name": "Peanut",
+    "base_zone": "Garden District",
+    "availability": "hired",
+    "capacity": 7,
+    "current_zone": "Garden District"
+  }
+]

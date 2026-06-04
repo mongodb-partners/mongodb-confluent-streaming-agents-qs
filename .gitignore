@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+
+# Environment & credentials
+.env
+*.env
+!.env.example
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Generated files
+FLINK_SQL_COMMANDS.md
+mcp_commands.txt
+
+# CLI run logs (deploy/destroy transcripts)
+logs/
+
+# Archive (development artifacts, deployment snapshots)
+archive/
+
+# Batch counter (tracks which data batch was last published)
+.batch_counter
+
+# ShadowTraffic generated connections
+terraform/agents/data-gen/connections/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# uv
+uv.lock
+*.tfvars.backup
+
+terraform/core/DEPLOYED_RESOURCES.md
