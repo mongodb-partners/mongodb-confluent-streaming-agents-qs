@@ -4,11 +4,11 @@ This document explains the system design, why specific technologies were chosen,
 
 ## System Overview
 
-The streaming agents quickstart implements a real-time, closed-loop autonomous system: it detects demand surges, understands their cause, and takes corrective action — all without human intervention. The system operates on three distinct planes:
+The streaming agents quickstart implements a real-time, closed-loop autonomous system: it detects demand surges, understands their cause, and takes corrective action, all without human intervention. The system operates on three planes:
 
-1. **Data Plane** — Kafka topics carry ride requests, traffic aggregates, anomalies, and dispatch actions as continuous streams
-2. **Compute Plane** — Flink SQL processes streams with windowed aggregation, ML anomaly detection, vector search, LLM inference, and agent tool calling
-3. **Storage Plane** — MongoDB Atlas persists zone traffic, anomalies, dispatch logs, and the vector knowledge base
+1. **Data Plane:** Kafka topics carry ride requests, traffic aggregates, anomalies, and dispatch actions as continuous streams
+2. **Compute Plane:** Flink SQL processes streams with windowed aggregation, ML anomaly detection, vector search, LLM inference, and agent tool calling
+3. **Storage Plane:** MongoDB Atlas persists zone traffic, anomalies, dispatch logs, and the vector knowledge base
 
 ## Why This Is Agentic
 
@@ -26,9 +26,9 @@ No human approves these decisions. No hardcoded rule says "if surge > 2x, send 4
 
 ### 2. Tool Use (MCP)
 
-The agent doesn't just generate text — it takes real actions via the Model Context Protocol:
-- **`get_vessel_catalog`** — Queries the MongoDB fleet database for available vessels, their positions, capacities, and status
-- **`dispatch_boats`** — Writes dispatch commands to MongoDB, updating vessel assignments
+The agent does more than generate text. It takes real actions via the Model Context Protocol:
+- **`get_vessel_catalog`:** Queries the MongoDB fleet database for available vessels, their positions, capacities, and status
+- **`dispatch_boats`:** Writes dispatch commands to MongoDB, updating vessel assignments
 
 These are real database operations, not simulated. The MCP server runs on AWS ECS Express Mode and proxies requests to the MongoDB MCP Server.
 
@@ -85,7 +85,7 @@ The system runs two parallel paths from anomaly detection, optimizing for both *
 
 If dispatch waited for enrichment, every anomaly would take 20-50 seconds before a boat was dispatched. By reading directly from `anomalies_per_zone`, the dispatch agent fires within seconds of anomaly detection.
 
-**Independence.** The dispatch decision doesn't need a prose explanation — it needs the raw data: which zone, how many requests, how much above expected. The agent's LLM handles its own reasoning.
+**Independence.** The dispatch decision doesn't need a prose explanation. It needs the raw data: which zone, how many requests, how far above expected. The agent's LLM handles its own reasoning.
 
 ## Component Architecture
 
@@ -131,7 +131,7 @@ Flink AI_RUN_AGENT
 [MongoDB Atlas]            <-- get_vessel_catalog, dispatch_boats
 ```
 
-The proxy exists because Flink's Spring AI MCP Client (v0.3.1) has content-type validation bugs — it rejects `text/plain` responses even on HTTP 202 acknowledgments. The proxy rewrites these to `application/json`.
+The proxy exists because Flink's Spring AI MCP Client (v0.3.1) has content-type validation bugs: it rejects `text/plain` responses even on HTTP 202 acknowledgments. The proxy rewrites these to `application/json`.
 
 ### Atlas Stream Processing (5 Processors)
 
@@ -152,7 +152,7 @@ Statements are managed at two levels:
 11 `confluent_flink_statement` resources in the `agents` module:
 - Table definitions (ride_requests, anomalies_per_zone, zone_traffic_sink, anomalies_sink)
 - Connection definitions (MongoDB vector search, MongoDB MCP, Voyage AI)
-- Model definitions (mongodb_mcp_model, voyage_query_embedding) — the `llm_textgen_model` definition lives in the `core` module
+- Model definitions (mongodb_mcp_model, voyage_query_embedding). The `llm_textgen_model` definition lives in the `core` module
 - View definition (windowed_traffic)
 
 These are idempotent (`CREATE IF NOT EXISTS`) and managed by `terraform apply`.
@@ -175,7 +175,7 @@ These are long-running streaming jobs that don't fit Terraform's plan/apply life
 
 ## Deployment Order
 
-The deployment sequence is carefully ordered to handle credential propagation and dependency chains:
+The deployment sequence is ordered to handle credential propagation and dependency chains:
 
 ```
 1. MCP Server Deploy (ECS Express)     → .env gets URL + token
@@ -230,7 +230,7 @@ api_response: STRING
 
 ### Why Flink SQL (not a Python orchestrator)?
 
-The entire pipeline — from windowed aggregation through anomaly detection, RAG, and agent dispatch — runs as native Flink SQL. This means:
+The entire pipeline (windowed aggregation, anomaly detection, RAG, and agent dispatch) runs as native Flink SQL. This means:
 - No external orchestrator to maintain
 - Processing scales with Flink's parallelism (50 CFU pool)
 - Exactly-once guarantees from Flink's checkpointing
@@ -256,4 +256,4 @@ This project uses a direct MongoDB MCP server (rather than a third-party proxy s
 ## Known Limitations / Future Work
 
 - **Knowledge base uses single-chunk-per-document.** The `events.knowledge_base.chunk` field is currently a verbatim copy of `description`. Workshop events are short (well under Voyage AI's per-input token limit), so a single embedding per document is sufficient and the field name reflects intent. Production deployments with long-form event descriptions should implement real chunking (sentence splitter, 256-token windows with 32-token overlap) before the Voyage `$https` call in `event_knowledge_base_population`, and store each chunk as a separate `knowledge_base` document keyed by `(document_id, chunk_index)`.
-- **`ML_DETECT_ANOMALIES` cold start.** The Flink ML model requires `minTrainingSize=50` five-minute windows per zone (~4h 10m of data) before producing anomalies. The pre-generated 24-hour `ride_requests.jsonl` satisfies this; live ShadowTraffic from a cold start does not — anomalies only begin appearing after ~4 hours.
+- **`ML_DETECT_ANOMALIES` cold start.** The Flink ML model requires `minTrainingSize=50` five-minute windows per zone (~4h 10m of data) before producing anomalies. The pre-generated 24-hour `ride_requests.jsonl` satisfies this; live ShadowTraffic from a cold start does not, so anomalies only begin appearing after ~4 hours.

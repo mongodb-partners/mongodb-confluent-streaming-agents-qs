@@ -183,7 +183,7 @@ restart_flink_dml(Path('.'))
 
 **Cause:** A previous agent-dispatch retry path dropped the `completed_actions` table but failed to recreate it (e.g. MCP was unhealthy at recreate time). The table never came back.
 
-**Fix:** The dashboard's "Run Agent Dispatch" button does just-in-time drops (only immediately before CREATEing the corresponding object) and stops the chain on the first error rather than half-applying. To recover, click "Run Agent Dispatch" — it will now correctly DROP + CREATE `completed_actions` in one transactional step.
+**Fix:** The dashboard's "Run Agent Dispatch" button does just-in-time drops (only immediately before CREATEing the corresponding object) and stops the chain on the first error rather than half-applying. To recover, click "Run Agent Dispatch"; it will now correctly DROP + CREATE `completed_actions` in one transactional step.
 
 ### `terraform apply` fails on agents with "Permission denied to access the Schema Registry cluster"
 
@@ -194,7 +194,7 @@ Flink Statement "ride-requests-create-table" provisioning status is "FAILED":
 Permission denied to access the Schema Registry cluster 'lsrc-...'
 ```
 
-**Cause:** Confluent control-plane permission propagation lag. Service-account `EnvironmentAdmin` role-bindings can take 30–120s to propagate to Flink runtime; the first Flink statement that talks to Schema Registry hits this on a fresh deploy.
+**Cause:** Confluent control-plane permission propagation lag. Service-account `EnvironmentAdmin` role-bindings can take 30 to 120 seconds to propagate to Flink runtime; the first Flink statement that talks to Schema Registry hits this on a fresh deploy.
 
 **Fix:** As of 2026-05, `scripts/common/terraform_runner.run_terraform()` auto-detects the propagation error pattern and retries up to 3 times with 45s/90s/120s backoff. Between retries, deploy.py sweeps server-side orphan FAILED Flink statements (otherwise the next CREATE 409s on the leftover). If you hit this on an older codebase or after 3 retries:
 
@@ -244,7 +244,7 @@ You'll get an actionable result listing the project's actual clusters:
   uv run deploy   # resumes from asp_setup
   ```
 
-- **Provision a fresh M10 via Terraform** (takes 7–15 min):
+- **Provision a fresh M10 via Terraform** (takes 7 to 15 minutes):
 
   ```bash
   # Edit .env:

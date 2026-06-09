@@ -1,13 +1,13 @@
-# Atlas-Enhanced Agentic Fleet Management — Walkthrough
+# Atlas-Enhanced Agentic Fleet Management: Walkthrough
 
 This walkthrough guides you through the full streaming agents pipeline: real-time anomaly detection, RAG enrichment with Vector Search, autonomous agent dispatch, and bidirectional data flow between Confluent Cloud and MongoDB Atlas.
 
 ### What This Demo Showcases
 
-1. **Flink MongoDB Sinks** -- Zone traffic aggregates and enriched anomalies flow from Flink into Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`), enabling real-time dashboards and historical analysis.
-2. **Atlas Stream Processing (ASP)** -- Five ASP processors handle event ingestion, embedding generation, dispatch log capture, zone traffic ingestion, and anomaly ingestion -- all running natively on Atlas.
-3. **Voyage AI Embeddings** -- Events are embedded using MongoDB's Atlas-hosted Voyage AI endpoint (`ai.mongodb.com`) via both ASP (document embedding) and Flink (query embedding), producing aligned 1024-dimension vectors.
-4. **Enhanced Vector Search** -- The knowledge base uses an enriched schema with structured metadata (zone, event type, impact level, attendance) for pre-filtered vector search.
+1. **Flink MongoDB Sinks:** Zone traffic aggregates and enriched anomalies flow from Flink into Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`), enabling real-time dashboards and historical analysis.
+2. **Atlas Stream Processing (ASP):** Five ASP processors handle event ingestion, embedding generation, dispatch log capture, zone traffic ingestion, and anomaly ingestion, all running natively on Atlas.
+3. **Voyage AI Embeddings:** Events are embedded using MongoDB's Atlas-hosted Voyage AI endpoint (`ai.mongodb.com`) via both ASP (document embedding) and Flink (query embedding), producing aligned 1024-dimension vectors.
+4. **Enhanced Vector Search:** The knowledge base uses an enriched schema with structured metadata (zone, event type, impact level, attendance) for pre-filtered vector search.
 
 ## Prerequisites
 
@@ -56,9 +56,9 @@ The deployment script will prompt you for:
 
 The deploy script handles the complete setup in one pass:
 
-1. **MCP Server** — MongoDB MCP Server is auto-deployed to AWS ECS Express Mode with a compatibility proxy
+1. **MCP Server:** MongoDB MCP Server is auto-deployed to AWS ECS Express Mode with a compatibility proxy
 2. **Terraform** deploys 14+ Flink SQL DDL resources (connections, tables, models, views)
-3. **Credentials** — Kafka and Schema Registry credentials are saved to `.env` for CLI tools
+3. **Credentials:** Kafka and Schema Registry credentials are saved to `.env` for CLI tools
 4. **Atlas Stream Processing** is provisioned automatically after Terraform completes:
    - Creates an ASP stream processing instance (SP10)
    - Registers 5 connection entries (Kafka, Atlas cluster, Voyage AI, two DLQ connections)
@@ -67,16 +67,16 @@ The deploy script handles the complete setup in one pass:
      `event_publication_to_kafka`, `dispatch_log_ingestion`,
      `zone_traffic_ingestion`, `anomalies_ingestion`
    - Seeds 10 events into `events.calendar`
-5. **Flink streaming statements** — 7 statements are created via the Flink REST API:
-   - `anomalies-enriched-ctas` (DDL) — Creates the `anomalies_enriched` table
-   - `completed-actions-ctas` (DDL) — Creates the `completed_actions` table
-   - `zone-traffic-sink-insert` — Sinks windowed traffic to MongoDB
-   - `anomaly-detection-insert` — Runs `ML_DETECT_ANOMALIES` anomaly detection
-   - `anomalies-enriched-insert` — RAG enrichment pipeline (embedding → vector search → LLM)
-   - `anomalies-sink-insert` — Sinks enriched anomalies to MongoDB
-   - `dispatch-insert` — Agent dispatch (reads directly from anomalies_per_zone)
-6. **Initial data** — Pre-generated ride data is published to bootstrap the pipeline
-7. **Dashboard** — The Streamlit dashboard launches automatically
+5. **Flink streaming statements:** 7 statements are created via the Flink REST API:
+   - `anomalies-enriched-ctas` (DDL): Creates the `anomalies_enriched` table
+   - `completed-actions-ctas` (DDL): Creates the `completed_actions` table
+   - `zone-traffic-sink-insert`: Sinks windowed traffic to MongoDB
+   - `anomaly-detection-insert`: Runs `ML_DETECT_ANOMALIES` anomaly detection
+   - `anomalies-enriched-insert`: RAG enrichment pipeline (embedding → vector search → LLM)
+   - `anomalies-sink-insert`: Sinks enriched anomalies to MongoDB
+   - `dispatch-insert`: Agent dispatch (reads directly from anomalies_per_zone)
+6. **Initial data:** Pre-generated ride data is published to bootstrap the pipeline
+7. **Dashboard:** The Streamlit dashboard launches automatically
 
 > **Manual fallback:** If ASP setup fails or you need to run it separately:
 > ```bash
@@ -105,7 +105,7 @@ uv run datagen
 uv run datagen --local
 ```
 
-The data generator produces a `ride_requests` stream -- incoming boat ride requests with pickup zones and drop-off zones.
+The data generator produces a `ride_requests` stream: incoming boat ride requests with pickup zones and drop-off zones.
 
 ### 1. Verify zone traffic is flowing to Atlas
 
@@ -177,7 +177,7 @@ The enrichment pipeline:
 
 ### 6. Define and run the streaming agent
 
-> **Note:** The deploy script now automatically creates the `dispatch-insert` statement, which reads directly from `anomalies_per_zone` and dispatches boats without waiting for RAG enrichment. This is the **parallel dispatch path** — it fires within seconds of anomaly detection.
+> **Note:** The deploy script now automatically creates the `dispatch-insert` statement, which reads directly from `anomalies_per_zone` and dispatches boats without waiting for RAG enrichment. This is the **parallel dispatch path**; it fires within seconds of anomaly detection.
 >
 > The dashboard button is available for manual triggering or re-creation if needed.
 
@@ -254,7 +254,7 @@ The dispatch INSERT reads anomaly data and passes it to `AI_RUN_AGENT`, which:
 3. Calls `dispatch_boats` to execute the allocation
 4. Returns a structured response with dispatch summary, JSON payload, and API response
 
-> **Architecture note:** The dispatch reads from `anomalies_per_zone` directly (not `anomalies_enriched`). This is the parallel dispatch path — the agent acts immediately on raw anomaly data without waiting for the RAG enrichment step to complete.
+> **Architecture note:** The dispatch reads from `anomalies_per_zone` directly (not `anomalies_enriched`). This is the parallel dispatch path: the agent acts immediately on raw anomaly data without waiting for the RAG enrichment step to complete.
 
 View the agent's dispatch actions:
 
@@ -301,7 +301,7 @@ Each document includes the `anomaly_reason` (LLM-generated explanation), top mat
 
 - **Voyage AI embedding errors?** Verify your API key. Ensure Voyage AI is enabled on your Atlas project and the API key is valid.
 
-- **Vector search returns no results?** The Atlas Vector Search index on `events.knowledge_base` may still be building. Check the index status in Atlas UI -- it should show "READY". Also verify that embedding dimensions match (both ASP and Flink should produce 1024-dimension vectors from `voyage-4`).
+- **Vector search returns no results?** The Atlas Vector Search index on `events.knowledge_base` may still be building. Check the index status in Atlas UI; it should show "READY". Also verify that embedding dimensions match (both ASP and Flink should produce 1024-dimension vectors from `voyage-4`).
 
 - **`analytics.zone_traffic` not populating?** The pipeline needs the `ride_requests` table to have data flowing. Verify data generation is running and check the Flink statement status in the SQL workspace.
 
@@ -317,7 +317,7 @@ Each document includes the `anomaly_reason` (LLM-generated explanation), top mat
 - `Runtime received bad response code 403` error?
   - Ensure you've activated the configured model in your AWS account. Default is Claude Sonnet 4.6 (via the `global.` cross-region inference profile). Check `TF_VAR_bedrock_model_id` in `.env`.
 
-- **`/ by zero` error in anomalies-enriched-insert?** The anomaly detection model occasionally outputs `expected_requests = 0`. Pull the latest code — this is fixed with `NULLIF` protection.
+- **`/ by zero` error in anomalies-enriched-insert?** The anomaly detection model occasionally outputs `expected_requests = 0`. Pull the latest code; this is fixed with `NULLIF` protection.
 
 - **Dispatch log empty but completed_actions has data?** The ASP `dispatch_log_ingestion` processor may have failed. Check its status in Atlas UI under Stream Processing and restart if needed.
 

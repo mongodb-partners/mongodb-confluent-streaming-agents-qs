@@ -10,11 +10,11 @@ All configuration is managed through `.env` in the project root. This file is cr
 
 When `--non-interactive` is set, the deploy script:
 
-1. **Implies `--plain`** -- disables the rich/questionary UI.
-2. **Hydrates `.env` from process environment variables** -- any of the keys listed below that are set in `os.environ` but missing from `.env` are written to `.env` before validation. Existing `.env` values are preserved (file wins over env), so individual fields can be overridden via the file without an env-var shadow surprise.
-3. **Validates required credentials up front** -- if any required key is missing from both `.env` and the environment, the deploy exits with code **2** and prints the list of missing keys. (Exit code 1 is reserved for preflight failures.)
-4. **Auto-confirms every interactive prompt** -- the deployment summary review, the Bedrock advisory check, and the resume-from-existing-deploy prompt all proceed with their default choice without asking. A complete deploy that is re-invoked unattended without `--force` prints the summary and exits (no silent re-deploy).
-5. **Refuses to prompt mid-flight** -- if any code path reaches `_text()` without a saved default, the deploy raises a clear `RuntimeError` instead of hanging on stdin.
+1. **Implies `--plain`:** disables the rich/questionary UI.
+2. **Hydrates `.env` from process environment variables:** any of the keys listed below that are set in `os.environ` but missing from `.env` are written to `.env` before validation. Existing `.env` values are preserved (file wins over env), so individual fields can be overridden via the file without an env-var shadow surprise.
+3. **Validates required credentials up front:** if any required key is missing from both `.env` and the environment, the deploy exits with code **2** and prints the list of missing keys. (Exit code 1 is reserved for preflight failures.)
+4. **Auto-confirms every interactive prompt:** the deployment summary review, the Bedrock advisory check, and the resume-from-existing-deploy prompt all proceed with their default choice without asking. A complete deploy that is re-invoked unattended without `--force` prints the summary and exits (no silent re-deploy).
+5. **Refuses to prompt mid-flight:** if any code path reaches `_text()` without a saved default, the deploy raises a clear `RuntimeError` instead of hanging on stdin.
 
 `--non-interactive` is compatible with `--from-phase`, `--force`, `--skip-preflight`, and `--workshop-mode`.
 

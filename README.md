@@ -1,6 +1,6 @@
 # MongoDB + Confluent Streaming Agents Quickstart
 
-Real-time anomaly detection and autonomous fleet dispatch powered by **MongoDB Atlas** and **Confluent Cloud**. A fully agentic system that detects demand surges, understands their cause via Retrieval-Augmented Generation (RAG), and autonomously dispatches boats — all running as native Flink SQL streaming operators.
+Real-time anomaly detection and autonomous fleet dispatch powered by **MongoDB Atlas** and **Confluent Cloud**. A fully agentic system that detects demand surges, understands their cause via Retrieval-Augmented Generation (RAG), and autonomously dispatches boats. Everything runs as native Flink SQL streaming operators.
 
 <p align="center">
   <img src="./assets/MongoDB_ConfluentJointSolution.png" width="768" alt="Architecture">
@@ -8,7 +8,7 @@ Real-time anomaly detection and autonomous fleet dispatch powered by **MongoDB A
 
 ## What Makes This Agentic
 
-This isn't just a pipeline — it's an autonomous decision-making system. When Flink detects a demand surge:
+When Flink detects a demand surge, the system decides what to do on its own:
 
 1. The LLM **queries the vessel catalog** via MCP tool calls to see what boats are available
 2. It **reasons about** proximity, capacity, and surge magnitude
@@ -40,7 +40,7 @@ ride_requests → [5-min window aggregation] → [ML_DETECT_ANOMALIES]
 ```
 
 **Path A** (display) enriches anomalies with context from the knowledge base for dashboards.
-**Path B** (dispatch) acts immediately on raw anomaly data — no waiting for RAG to complete.
+**Path B** (dispatch) acts immediately on raw anomaly data. It does not wait for RAG to complete.
 
 ## Prerequisites
 
