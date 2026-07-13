@@ -12,7 +12,6 @@ from dataclasses import is_dataclass
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # TC-FRC-INIT-001: class + from_env
 # ---------------------------------------------------------------------------
@@ -109,6 +108,7 @@ def test_TC_FRC_RETRY_001_retry_backoff(monkeypatch):
     monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
 
     import urllib.error
+
     # Patch on the class (frozen dataclass blocks instance-level setattr)
     def fake_post(self, url, body, timeout=30):
         raise urllib.error.HTTPError(url, 429, "Too Many", {}, None)

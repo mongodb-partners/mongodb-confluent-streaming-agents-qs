@@ -63,7 +63,9 @@ def test_TC_SUM_002_summary_sections(cli_output, tmp_path, monkeypatch):
     with cli_output.capture() as (out, _log):
         deploy.print_deployment_summary(env, tmp_path)
     text = "\n".join(out)
-    for required in ("Confluent", "Atlas", "MCP", "Dashboard", "Next steps"):
+    # 2026-07-14 single-UI consolidation: "Mission Control" replaced the
+    # Streamlit "Dashboard" section in the summary.
+    for required in ("Confluent", "Atlas", "MCP", "Mission Control", "Next steps"):
         assert required in text, f"summary must include section '{required}'; got:\n{text}"
 
 

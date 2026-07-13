@@ -18,7 +18,6 @@ from unittest import mock
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -116,6 +115,7 @@ def test_TC_P3_H2_connection_json_files_written_mode_0600():
     write the JSON file with mode 0o600 (contains Kafka SASL + Schema
     Registry credentials)."""
     from scripts.common import datagen_helpers
+
     # Source must contain a chmod 0o600 or os.open with O_CREAT 0o600.
     src = inspect.getsource(datagen_helpers)
     has_mode = (
@@ -216,6 +216,7 @@ def test_TC_P3_H4_quick_stats_fragment_handles_none_counts():
     # the function must use a guard helper.
     # Look for the _quick_stats / KPI render block at line ~1896.
     import re
+
     # Naive: any line with `:,}` followed by f-string interpolation
     # that includes `counts.get` should be guarded.
     risky_lines = [
@@ -257,6 +258,7 @@ def test_TC_P3_H5_run_asp_setup_failure_aborts_deploy():
       4. Assert SystemExit raised AND DEPLOY_LAST_FAILED_PHASE recorded.
     """
     import tempfile
+
     from scripts import deploy
 
     # Find the phase function by source pattern (the one that calls
@@ -352,6 +354,7 @@ def test_TC_P3_H7_egress_fallback_warns():
     """
     import io
     from contextlib import redirect_stdout
+
     from scripts.common import tfvars
 
     # 1. Detector returns None when the network probe fails.
@@ -404,8 +407,9 @@ def test_TC_P3_M1_atlas_retry_does_not_retry_post_on_5xx():
     """M1: POST is not idempotent; retrying a 5xx on POST risks creating
     a duplicate side effect. The retry layer must restrict 5xx retry
     to GET/DELETE methods (POST retries only on transport errors)."""
-    from scripts.asp_setup import AtlasAPI
     import requests
+
+    from scripts.asp_setup import AtlasAPI
 
     api = AtlasAPI(public_key="pk", private_key="sk", project_id="proj")
     attempts = {"n": 0}
@@ -438,8 +442,9 @@ def test_TC_P3_M1_atlas_retry_does_not_retry_post_on_5xx():
 def test_TC_P3_M3_atlas_retry_honors_retry_after():
     """M3: on HTTP 429, retry must honor the Retry-After header if it's
     larger than the static backoff."""
-    from scripts.asp_setup import AtlasAPI
     import requests
+
+    from scripts.asp_setup import AtlasAPI
 
     api = AtlasAPI(public_key="pk", private_key="sk", project_id="proj")
     attempts = {"n": 0}
@@ -661,6 +666,7 @@ def test_TC_P3_L2_stability_validation_detects_late_failure():
     import urllib  # use the top-level package so urllib.request.urlopen resolves
     import urllib.request  # noqa: F401 — ensure submodule is loaded
     from contextlib import redirect_stdout
+
     from scripts import deploy
 
     # 1. Extract the stability while-loop AST node.
@@ -744,6 +750,7 @@ def test_TC_P3_C3_atlas_reconcile_module_exists():
     """REQ-CRG-026 / C-3: scripts/common/atlas_reconcile.py provides the
     extracted atlas reconciliation helpers."""
     from scripts.common import atlas_reconcile
+
     # Public API
     for name in ("db_user_exists", "delete_db_user",
                  "reconcile_orphan_db_user", "quarantine_stale_agents_state"):
@@ -755,8 +762,9 @@ def test_TC_P3_C3_atlas_reconcile_module_exists():
 def test_TC_P3_C3_db_user_exists_behavior():
     """REQ-CRG-026 / C-3: db_user_exists must return True/False/None
     based on HTTP status code."""
-    from scripts.common import atlas_reconcile
     import requests
+
+    from scripts.common import atlas_reconcile
 
     class FakeResp:
         def __init__(self, code): self.status_code = code
@@ -862,8 +870,9 @@ class TestFlinkPipelineCheckMcpHealth:
     """
 
     def test_returns_true_on_http_200(self):
-        from scripts.common import flink_pipeline as fp
         from unittest import mock
+
+        from scripts.common import flink_pipeline as fp
 
         class _Resp:
             status = 200
@@ -875,9 +884,10 @@ class TestFlinkPipelineCheckMcpHealth:
             assert fp.check_mcp_health("http://mcp.example", "tok") is True
 
     def test_returns_false_on_401(self):
-        from scripts.common import flink_pipeline as fp
-        from unittest import mock
         import urllib.error
+        from unittest import mock
+
+        from scripts.common import flink_pipeline as fp
 
         def _raise_401(*a, **kw):
             raise urllib.error.HTTPError(
@@ -887,9 +897,10 @@ class TestFlinkPipelineCheckMcpHealth:
             assert fp.check_mcp_health("http://mcp.example", "tok") is False
 
     def test_returns_false_on_connection_refused(self):
-        from scripts.common import flink_pipeline as fp
-        from unittest import mock
         import urllib.error
+        from unittest import mock
+
+        from scripts.common import flink_pipeline as fp
 
         def _raise(*a, **kw):
             raise urllib.error.URLError("Connection refused")
@@ -897,9 +908,10 @@ class TestFlinkPipelineCheckMcpHealth:
             assert fp.check_mcp_health("http://mcp.example", "tok") is False
 
     def test_returns_false_on_timeout(self):
-        from scripts.common import flink_pipeline as fp
-        from unittest import mock
         import socket
+        from unittest import mock
+
+        from scripts.common import flink_pipeline as fp
 
         def _raise(*a, **kw):
             raise socket.timeout("timed out")
@@ -907,8 +919,9 @@ class TestFlinkPipelineCheckMcpHealth:
             assert fp.check_mcp_health("http://mcp.example", "tok", timeout=1) is False
 
     def test_returns_false_on_5xx(self):
-        from scripts.common import flink_pipeline as fp
         from unittest import mock
+
+        from scripts.common import flink_pipeline as fp
 
         class _Resp:
             status = 503
@@ -991,8 +1004,9 @@ class TestAtlasReconcileQuarantine:
 
     def test_no_env_id_drift_no_op(self, tmp_path: Path, monkeypatch):
         """When agents state references the CURRENT env-id, no rename."""
-        from scripts.common import atlas_reconcile
         import json
+
+        from scripts.common import atlas_reconcile
 
         (tmp_path / "terraform" / "agents").mkdir(parents=True)
         (tmp_path / "terraform" / "core").mkdir(parents=True)
@@ -1028,8 +1042,9 @@ class TestCliLoggingBootstrap:
 
     def test_no_log_flag_returns_none(self, monkeypatch):
         """--no-log in sys.argv → returns None, doesn't wrap."""
-        from scripts.common import cli_logging
         import sys as _sys
+
+        from scripts.common import cli_logging
 
         monkeypatch.setattr(_sys, "argv", ["deploy", "--no-log"])
         # Also stub isatty to True so the function reaches the --no-log
@@ -1043,8 +1058,9 @@ class TestCliLoggingBootstrap:
 
     def test_non_tty_returns_none(self, monkeypatch):
         """No-TTY stdin → returns None (don't wrap CI / piped input)."""
-        from scripts.common import cli_logging
         import sys as _sys
+
+        from scripts.common import cli_logging
 
         monkeypatch.setattr(_sys.stdin, "isatty", lambda: False, raising=False)
         result = cli_logging.bootstrap_logging("test")
@@ -1053,8 +1069,9 @@ class TestCliLoggingBootstrap:
     def test_inner_process_returns_path(self, monkeypatch, tmp_path: Path):
         """When _BOOTSTRAP_ENV is set, we're the inner process — return
         the log path without re-spawning."""
-        from scripts.common import cli_logging
         import os
+
+        from scripts.common import cli_logging
 
         log_path = tmp_path / "deploy-test.log"
         monkeypatch.setenv(cli_logging._BOOTSTRAP_ENV, str(log_path))
@@ -1122,8 +1139,10 @@ class TestCliOutputPruneOldLogs:
     """Pass-6 H-NEW-7: _prune_old_logs covers both .log and .jsonl."""
 
     def test_old_log_pruned(self, tmp_path: Path):
+        import os
+        import time
+
         from scripts.common.cli_output import _prune_old_logs
-        import os, time
 
         old_log = tmp_path / "deploy-old.log"
         old_log.write_text("")
@@ -1136,8 +1155,10 @@ class TestCliOutputPruneOldLogs:
 
     def test_old_jsonl_also_pruned(self, tmp_path: Path):
         """Pass-6 H-NEW-7: pipeline-reset JSONLs were leaked forever."""
+        import os
+        import time
+
         from scripts.common.cli_output import _prune_old_logs
-        import os, time
 
         old_jsonl = tmp_path / "pipeline-reset-old.jsonl"
         old_jsonl.write_text("")
@@ -1163,8 +1184,10 @@ class TestCliOutputPruneOldLogs:
 
     def test_unknown_suffixes_left_alone(self, tmp_path: Path):
         """Files with non-log suffixes (.txt, .md, etc.) are not touched."""
+        import os
+        import time
+
         from scripts.common.cli_output import _prune_old_logs
-        import os, time
 
         leave = tmp_path / "config.txt"
         leave.write_text("important")
@@ -1186,8 +1209,9 @@ class TestAtomicEnvWrite:
     paths with mkstemp + os.replace."""
 
     def test_creates_file_with_0600(self, tmp_path: Path):
-        from scripts.common.env_file import atomic_write_env
         import stat
+
+        from scripts.common.env_file import atomic_write_env
 
         target = tmp_path / ".env"
         atomic_write_env(target, {"FOO": "bar"})

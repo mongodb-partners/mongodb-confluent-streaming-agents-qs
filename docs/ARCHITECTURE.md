@@ -37,7 +37,7 @@ These are real database operations, not simulated. The MCP server runs on AWS EC
 The agent's actions have observable consequences:
 - Dispatched boats appear in `fleet.dispatch_log` via ASP
 - The vessel catalog is updated, so subsequent dispatches see the new state
-- The Streamlit dashboard shows dispatch history in real time
+- Mission Control (the live HUD) shows the dispatch in real time, as a pure projection of Atlas change streams
 
 This creates a feedback loop: the agent's past decisions change the world state that future decisions operate on.
 
@@ -48,7 +48,7 @@ The system runs two parallel paths from anomaly detection, optimizing for both *
 ```
                                 ride_requests (Kafka)
                                         |
-                            [TUMBLE 5-min window aggregation]
+                            [TUMBLE 1-min window aggregation]
                                         |
                                 windowed_traffic (View)
                                         |
@@ -57,7 +57,7 @@ The system runs two parallel paths from anomaly detection, optimizing for both *
                                 anomalies_per_zone (Kafka)
                                    /              \
                                   /                \
-                 PATH A: Display                    PATH B: Dispatch
+                 PATH A: Insight                    PATH B: Dispatch
                  (RAG Enrichment)                   (Agent Action)
                         |                                  |
            [Voyage AI embedding]                  [AI_RUN_AGENT]
@@ -67,13 +67,17 @@ The system runs two parallel paths from anomaly detection, optimizing for both *
            [LLM explanation]                  completed_actions (Kafka)
                         |                                  |
               anomalies_enriched (Kafka)             [ASP processor]
-                   /          \                            |
-                  /            \                   fleet.dispatch_log (Atlas)
-    [anomalies_sink]    [dashboard display]
-           |
-    [ASP processor]
-           |
-    analytics.zone_anomalies (Atlas)
+                        |                                  |
+                [ASP merge processor]              fleet.dispatch_log (Atlas)
+                        |
+      analytics.zone_anomalies (reason + chunks
+      merged onto the doc the sink path wrote)
+
+    In parallel, anomalies_per_zone feeds the sink path directly
+    (so anomalies reach Atlas even if RAG enrichment fails):
+
+    anomalies_per_zone --> [anomalies_sink] --> [ASP processor]
+        --> analytics.zone_anomalies (Atlas) --> [Mission Control]
 ```
 
 ### Why Two Paths?
@@ -105,7 +109,7 @@ If dispatch waited for enrichment, every anomaly would take 20-50 seconds before
 | `events.calendar` | Source events with zone, time, attendance data |
 | `events.knowledge_base` | Voyage AI-embedded event documents for vector search |
 | `analytics.zone_traffic` | Windowed traffic aggregates (via ASP) |
-| `analytics.zone_anomalies` | Enriched anomalies with LLM explanations (via ASP) |
+| `analytics.zone_anomalies` | Detected anomalies (synthesized reason first, then RAG reason + evidence chunks merged in when enrichment completes) |
 | `fleet.dispatch_log` | Agent dispatch actions with summaries (via ASP) |
 | Atlas Vector Search | `vector_index` on `events.knowledge_base` (queried from Flink via the `documents_vectordb` table) for RAG |
 | Atlas Stream Processing | 5 processors for bidirectional data flow |
@@ -137,11 +141,35 @@ The proxy exists because Flink's Spring AI MCP Client (v0.3.1) has content-type 
 
 | Processor | Source | Destination | Purpose |
 |-----------|--------|-------------|---------|
-| `event_knowledge_base_population` | `events.calendar` | `events.knowledge_base` | Embed events via Voyage AI |
 | `event_publication_to_kafka` | `events.calendar` | Kafka `event_documents` | Publish events for Flink |
 | `zone_traffic_ingestion` | Kafka `zone_traffic_sink` | `analytics.zone_traffic` | Sink traffic aggregates |
-| `anomalies_ingestion` | Kafka `anomalies_sink` | `analytics.zone_anomalies` | Sink enriched anomalies |
+| `anomalies_ingestion` | Kafka `anomalies_sink` | `analytics.zone_anomalies` | Sink anomalies |
 | `dispatch_log_ingestion` | Kafka `completed_actions` | `fleet.dispatch_log` | Sink dispatch actions |
+| `anomalies_enriched_ingestion` | Kafka `anomalies_enriched` | `analytics.zone_anomalies` | Merge RAG reason + evidence chunks onto anomaly docs |
+
+> **Note:** Knowledge-base embedding is no longer an ASP processor. ASP `$https`
+> calls to the Voyage endpoint fail with HTTP 400, so `events.knowledge_base` is
+> embedded and seeded in Python at deploy time by `populate_knowledge_base()`
+> (`scripts/asp_setup.py`).
+
+### Mission Control (UI)
+
+Mission Control is the single UI, launched by `uv run deploy` (or manually via `uv run live`). It is a FastAPI sidecar (`scripts/live_server.py`) that serves the static SPA in `web/` same-origin on port 8502, so there is no CORS to misconfigure:
+
+```
+MongoDB Atlas ──(cluster-level change stream, watcher thread)──▶ ChangeStreamHub
+                                                                      |
+                                        GET /api/stream (SSE) ──▶ browser (web/)
+```
+
+- **`GET /api/bootstrap`** warm-starts the page: vessels, recent anomalies, dispatches, knowledge-base cards, traffic, and collection counts in one payload.
+- **`GET /api/stream`** is a Server-Sent Events stream; each Atlas change-stream event on a watched collection (`analytics.zone_anomalies`, `fleet.dispatch_log`, `analytics.zone_traffic`, `events.knowledge_base`) is fanned out to every connected browser.
+- **`GET /api/health`** reports the change-stream watcher's state.
+- The watcher holds a cluster-level change stream and reconnects with exponential backoff (1s → 30s cap) if Atlas drops the connection; the browser's EventSource auto-reconnects and drives the LIVE / RECONNECTING / OFFLINE badge.
+
+The UI is a pure projection of database writes: nothing is staged client-side, so what appears on screen is evidence that the pipeline actually wrote to Atlas.
+
+The server also runs a **RAG fallback worker**: the Flink enrichment statement (`anomalies-enriched-insert`) is best-effort — its per-anomaly federated vector search can time out and kill the statement. When an anomaly document still has no `top_chunk_*` evidence ~40 s after landing, the worker performs the same retrieval directly (Voyage query embedding + Atlas `$vectorSearch` on `events.knowledge_base`) and `$set`s the chunks onto the document (`enriched_by: rag-fallback`), which the change stream then pushes to the browser. The worker writes real vector-search results to the database; the UI still only renders database state. It requires `TF_VAR_voyage_api_key` and is skipped (with a log line) otherwise.
 
 ## Flink Statement Management
 
@@ -173,6 +201,8 @@ These are idempotent (`CREATE IF NOT EXISTS`) and managed by `terraform apply`.
 
 These are long-running streaming jobs that don't fit Terraform's plan/apply lifecycle. They are deleted on `uv run destroy` and recreated on `uv run deploy`.
 
+> **Note:** `anomalies-enriched-insert` is best-effort. It passes `MAP['client_timeout', 120, 'retry_count', 6]` to `VECTOR_SEARCH_AGG`, but the statement can still go FAILED on a vector-search timeout. Because `anomalies-sink-insert` reads directly from `anomalies_per_zone`, anomalies keep reaching Atlas (and Mission Control) even while enrichment is down. Recover with `uv run datagen` (restarts the DML statements) or by resuming deploy's `flink_dml` phase.
+
 ## Deployment Order
 
 The deployment sequence is ordered to handle credential propagation and dependency chains:
@@ -183,9 +213,9 @@ The deployment sequence is ordered to handle credential propagation and dependen
 3. Terraform Apply (agents)            → Creates DDL tables/views in Flink catalog
 4. Save Terraform Credentials          → Kafka/SR creds written to .env
 5. Publish Initial Data                → Registers schemas, propagates Kafka auth (~30s)
-6. ASP Setup                           → Needs Kafka creds propagated (step 5 acts as buffer)
+6. ASP Setup                           → Also seeds events + embeds knowledge base (Python)
 7. Create Flink DML Statements         → Pre-creates topics, DDL first, then DML
-8. Launch Dashboard                    → Port 8501
+8. Launch Mission Control              → Port 8502
 ```
 
 ## Data Model
@@ -244,10 +274,9 @@ This project uses a direct MongoDB MCP server (rather than a third-party proxy s
 - Lower latency (direct MongoDB access vs Zapier → Lambda → MongoDB)
 - Simpler for workshop participants (no Zapier setup)
 
-### Why Haiku for RAG, Sonnet for Agent?
+### Model Configuration
 
-- **RAG explanations** need fast, concise text generation. Haiku 4.5 is 5-10x faster than Sonnet for this task with comparable quality for short summaries.
-- **Agent dispatch** needs complex reasoning: evaluating multiple vessels, proximity, capacity, and making allocation decisions across up to 8 boats. Sonnet handles this better.
+Both the RAG explanation model (`llm_textgen_model`, defined in the `core` module) and the dispatch agent model (`mongodb_mcp_model`, defined in the `agents` module) use the **same** Bedrock connection and therefore the same LLM. The default is `global.anthropic.claude-sonnet-4-6` (Sonnet 4.6 via the cross-region inference profile); override it by setting `TF_VAR_bedrock_model_id` in `.env` before deploying (see [CONFIGURATION.md](CONFIGURATION.md)).
 
 ### Why Split DDL and DML?
 
@@ -255,5 +284,5 @@ This project uses a direct MongoDB MCP server (rather than a third-party proxy s
 
 ## Known Limitations / Future Work
 
-- **Knowledge base uses single-chunk-per-document.** The `events.knowledge_base.chunk` field is currently a verbatim copy of `description`. Workshop events are short (well under Voyage AI's per-input token limit), so a single embedding per document is sufficient and the field name reflects intent. Production deployments with long-form event descriptions should implement real chunking (sentence splitter, 256-token windows with 32-token overlap) before the Voyage `$https` call in `event_knowledge_base_population`, and store each chunk as a separate `knowledge_base` document keyed by `(document_id, chunk_index)`.
-- **`ML_DETECT_ANOMALIES` cold start.** The Flink ML model requires `minTrainingSize=50` five-minute windows per zone (~4h 10m of data) before producing anomalies. The pre-generated 24-hour `ride_requests.jsonl` satisfies this; live ShadowTraffic from a cold start does not, so anomalies only begin appearing after ~4 hours.
+- **Knowledge base uses single-chunk-per-document.** The `events.knowledge_base.chunk` field is currently a verbatim copy of `description`. Workshop events are short (well under Voyage AI's per-input token limit), so a single embedding per document is sufficient and the field name reflects intent. Production deployments with long-form event descriptions should implement real chunking (sentence splitter, 256-token windows with 32-token overlap) before the Voyage embedding call in `populate_knowledge_base()` (`scripts/asp_setup.py`), and store each chunk as a separate `knowledge_base` document keyed by `(document_id, chunk_index)`.
+- **`ML_DETECT_ANOMALIES` cold start.** The Flink ML model requires `minTrainingSize=15` one-minute windows per zone (~15 minutes of data) before producing anomalies. The pre-generated 24-hour `ride_requests.jsonl` published during deploy satisfies this immediately; live ShadowTraffic from a cold start produces anomalies only after ~15 minutes.

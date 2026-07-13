@@ -21,6 +21,7 @@ def _detect_egress_cidrs() -> Optional[list]:
     """
     try:
         import urllib.request
+
         with urllib.request.urlopen(
             "https://checkip.amazonaws.com",
             timeout=5,
@@ -33,6 +34,28 @@ def _detect_egress_cidrs() -> Optional[list]:
         return [f"{ip}/32"]
     except Exception:
         return None
+
+
+def _hcl_escape(value: str) -> str:
+    """Escape a string for safe embedding in an HCL double-quoted literal.
+
+    Credential values (passwords, tokens, connection strings) can contain
+    characters that break or, worse, alter the generated terraform.tfvars:
+      - ``\\`` and ``"`` terminate/escape the string literal
+      - ``${...}`` / ``%{...}`` are HCL template interpolation sequences
+      - newlines break the single-line ``key = "..."`` assignment
+    Escaping order matters: backslash first, then quotes, then the ``$``/``%``
+    interpolation markers (doubled per HCL rules), then control chars.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    # HCL escapes template interpolation by doubling the leading marker.
+    s = s.replace("${", "$${").replace("%{", "%%{")
+    s = s.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return s
 
 
 def get_credential_value(creds: Dict[str, str], key: str) -> Optional[str]:
@@ -124,27 +147,33 @@ def generate_core_tfvars_content(
     emits atlas_* tfvars; the legacy parameters are accepted for backward
     compatibility but ignored.
     """
-    _ = (create_atlas_cluster, atlas_public_key, atlas_private_key,
-         atlas_project_id, atlas_cluster_name, atlas_db_username,
-         atlas_db_password)  # accepted, intentionally unused
+    _ = (
+        create_atlas_cluster,
+        atlas_public_key,
+        atlas_private_key,
+        atlas_project_id,
+        atlas_cluster_name,
+        atlas_db_username,
+        atlas_db_password,
+    )  # accepted, intentionally unused
 
     content = f"""# Core Infrastructure Configuration
-cloud_region = "{region}"
-confluent_cloud_api_key = "{api_key}"
-confluent_cloud_api_secret = "{api_secret}"
+cloud_region = "{_hcl_escape(region)}"
+confluent_cloud_api_key = "{_hcl_escape(api_key)}"
+confluent_cloud_api_secret = "{_hcl_escape(api_secret)}"
 """
 
     if owner_email:
-        content += f'owner_email = "{owner_email}"\n'
+        content += f'owner_email = "{_hcl_escape(owner_email)}"\n'
 
     # AWS Bedrock credentials
     if aws_bedrock_access_key and aws_bedrock_secret_key:
-        content += f'aws_bedrock_access_key = "{aws_bedrock_access_key}"\n'
-        content += f'aws_bedrock_secret_key = "{aws_bedrock_secret_key}"\n'
+        content += f'aws_bedrock_access_key = "{_hcl_escape(aws_bedrock_access_key)}"\n'
+        content += f'aws_bedrock_secret_key = "{_hcl_escape(aws_bedrock_secret_key)}"\n'
         if aws_session_token:
-            content += f'aws_session_token = "{aws_session_token}"\n'
+            content += f'aws_session_token = "{_hcl_escape(aws_session_token)}"\n'
         if bedrock_model_id:
-            content += f'bedrock_model_id = "{bedrock_model_id}"\n'
+            content += f'bedrock_model_id = "{_hcl_escape(bedrock_model_id)}"\n'
 
     return content
 
@@ -167,19 +196,19 @@ def generate_atlas_tfvars_content(
     a /32.
     """
     content = f"""# Atlas Cluster Configuration (independent module, persists across redeploys)
-cloud_region = "{cloud_region}"
-atlas_public_key = "{atlas_public_key}"
-atlas_private_key = "{atlas_private_key}"
-atlas_project_id = "{atlas_project_id}"
-atlas_cluster_name = "{atlas_cluster_name}"
-atlas_db_username = "{atlas_db_username}"
-atlas_db_password = "{atlas_db_password}"
+cloud_region = "{_hcl_escape(cloud_region)}"
+atlas_public_key = "{_hcl_escape(atlas_public_key)}"
+atlas_private_key = "{_hcl_escape(atlas_private_key)}"
+atlas_project_id = "{_hcl_escape(atlas_project_id)}"
+atlas_cluster_name = "{_hcl_escape(atlas_cluster_name)}"
+atlas_db_username = "{_hcl_escape(atlas_db_username)}"
+atlas_db_password = "{_hcl_escape(atlas_db_password)}"
 """
     if owner_email:
-        content += f'owner_email = "{owner_email}"\n'
+        content += f'owner_email = "{_hcl_escape(owner_email)}"\n'
     # emit the access-list CIDRs.
     cidrs = atlas_access_cidrs or ["0.0.0.0/0"]
-    cidr_hcl = ", ".join(f'"{c}"' for c in cidrs)
+    cidr_hcl = ", ".join(f'"{_hcl_escape(c)}"' for c in cidrs)
     content += f"atlas_access_cidrs = [{cidr_hcl}]\n"
     return content
 
@@ -210,24 +239,21 @@ def generate_agents_tfvars_content(
         Formatted terraform.tfvars content
     """
     content = f"""# Agents Configuration
-mcp_server_url = "{mcp_server_url}"
-mcp_auth_token = "{mcp_auth_token}"
-voyage_api_key = "{voyage_api_key}"
-mongodb_connection_string = "{mongo_conn}"
-mongodb_username = "{mongo_user}"
-mongodb_password = "{mongo_pass}"
+mcp_server_url = "{_hcl_escape(mcp_server_url)}"
+mcp_auth_token = "{_hcl_escape(mcp_auth_token)}"
+voyage_api_key = "{_hcl_escape(voyage_api_key)}"
+mongodb_connection_string = "{_hcl_escape(mongo_conn)}"
+mongodb_username = "{_hcl_escape(mongo_user)}"
+mongodb_password = "{_hcl_escape(mongo_pass)}"
 """
     if voyage_api_endpoint:
-        content += f'voyage_api_endpoint = "{voyage_api_endpoint}"\n'
+        content += f'voyage_api_endpoint = "{_hcl_escape(voyage_api_endpoint)}"\n'
 
     return content
 
 
 def write_tfvars_for_deployment(
-    root: Path,
-    region: str,
-    creds: Dict[str, str],
-    envs_to_deploy: list
+    root: Path, region: str, creds: Dict[str, str], envs_to_deploy: list
 ) -> None:
     """
     Write terraform.tfvars files for all environments being deployed.
@@ -240,15 +266,32 @@ def write_tfvars_for_deployment(
     """
     # Atlas terraform.tfvars (independent module, persists across redeploys)
     if "atlas" in envs_to_deploy:
-        atlas_public_key = creds.get("ATLAS_PUBLIC_KEY") or get_credential_value(creds, "atlas_public_key")
-        atlas_private_key = creds.get("ATLAS_PRIVATE_KEY") or get_credential_value(creds, "atlas_private_key")
-        atlas_project_id = creds.get("ATLAS_PROJECT_ID") or get_credential_value(creds, "atlas_project_id")
-        atlas_cluster_name = creds.get("ATLAS_CLUSTER_NAME") or get_credential_value(creds, "atlas_cluster_name") or "streaming-agents-cluster"
-        atlas_db_username = get_credential_value(creds, "atlas_db_username") or "streaming_agents_app"
+        atlas_public_key = creds.get("ATLAS_PUBLIC_KEY") or get_credential_value(
+            creds, "atlas_public_key"
+        )
+        atlas_private_key = creds.get("ATLAS_PRIVATE_KEY") or get_credential_value(
+            creds, "atlas_private_key"
+        )
+        atlas_project_id = creds.get("ATLAS_PROJECT_ID") or get_credential_value(
+            creds, "atlas_project_id"
+        )
+        atlas_cluster_name = (
+            creds.get("ATLAS_CLUSTER_NAME")
+            or get_credential_value(creds, "atlas_cluster_name")
+            or "streaming-agents-cluster"
+        )
+        atlas_db_username = (
+            get_credential_value(creds, "atlas_db_username") or "streaming_agents_app"
+        )
         atlas_db_password = get_credential_value(creds, "atlas_db_password")
         owner_email = get_credential_value(creds, "owner_email")
 
-        if atlas_public_key and atlas_private_key and atlas_project_id and atlas_db_password:
+        if (
+            atlas_public_key
+            and atlas_private_key
+            and atlas_project_id
+            and atlas_db_password
+        ):
             atlas_tfvars_path = root / "terraform" / "atlas" / "terraform.tfvars"
             # pick CIDRs based on workshop-mode (passed
             # through creds["workshop_mode"] = "true"/"false" by deploy).
@@ -303,7 +346,9 @@ def write_tfvars_for_deployment(
         if api_key and api_secret:
             core_tfvars_path = root / "terraform" / "core" / "terraform.tfvars"
             content = generate_core_tfvars_content(
-                region, api_key, api_secret,
+                region,
+                api_key,
+                api_secret,
                 owner_email=owner_email,
                 aws_bedrock_access_key=aws_bedrock_access_key,
                 aws_bedrock_secret_key=aws_bedrock_secret_key,
@@ -325,7 +370,14 @@ def write_tfvars_for_deployment(
         mongo_user = get_credential_value(creds, "mongodb_username")
         mongo_pass = get_credential_value(creds, "mongodb_password")
 
-        if mcp_server_url and mcp_auth_token and voyage_api_key and mongo_conn and mongo_user and mongo_pass:
+        if (
+            mcp_server_url
+            and mcp_auth_token
+            and voyage_api_key
+            and mongo_conn
+            and mongo_user
+            and mongo_pass
+        ):
             agents_tfvars_path = root / "terraform" / "agents" / "terraform.tfvars"
             content = generate_agents_tfvars_content(
                 mcp_server_url,
@@ -339,6 +391,8 @@ def write_tfvars_for_deployment(
             if write_tfvars_file(agents_tfvars_path, content):
                 print(f"  Wrote {agents_tfvars_path}")
         elif not (mongo_conn and mongo_user and mongo_pass):
-            print("  MongoDB Atlas credentials are required (connection string, username, password)")
+            print(
+                "  MongoDB Atlas credentials are required (connection string, username, password)"
+            )
         elif not (mcp_server_url and mcp_auth_token):
             print("  MCP Server URL/token not available — run MCP deploy first")

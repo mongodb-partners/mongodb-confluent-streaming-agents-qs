@@ -84,7 +84,7 @@ export ATLAS_PROJECT_ID="$ATLAS_PROJECT_ID"
 uv run deploy --non-interactive
 ```
 
-After hydration the deploy writes these values to `.env` so subsequent CLI tools (`asp-setup`, `datagen`, `dashboard`) can read them without re-export.
+After hydration the deploy writes these values to `.env` so subsequent CLI tools (`asp-setup`, `datagen`, `live`) can read them without re-export.
 
 ### Pattern 3: resume from a failed phase
 
@@ -222,6 +222,13 @@ These are written by `deploy.py` after Terraform completes. Do not edit manually
 |----------|-------------|--------|
 | `DEPLOY_PHASE` | Tracks deployment progress for resume-on-failure | `atlas_terraform`, `mcp_server`, `terraform`, `credentials`, `publish_data`, `asp_setup`, `flink_dml`, `complete` |
 
+### Mission Control (Live UI)
+
+| Variable | Description | Set By |
+|----------|-------------|--------|
+| `LIVE_SSE_URL` | URL of the running Mission Control / SSE sidecar (e.g. `http://localhost:8502`) | Auto (deploy, when it launches the live server) |
+| `LIVE_SSE_ALLOW_ORIGINS` | Extra CORS origins for the SSE endpoints (comma-separated) | User (optional) |
+
 ## Terraform Variables
 
 ### Core Module (`terraform/core/variables.tf`)
@@ -256,7 +263,7 @@ These are written by `deploy.py` after Terraform completes. Do not edit manually
 | `ride_requests` | 6 | ShadowTraffic / publish_data | Flink (windowed_traffic view) |
 | `windowed_traffic` | 6 | Flink (view materialization) | Flink (anomaly detection) |
 | `anomalies_per_zone` | 6 | Flink (anomaly-detection-insert) | Flink (enrichment + dispatch) |
-| `anomalies_enriched` | 6 | Flink (anomalies-enriched-insert) | Dashboard display |
+| `anomalies_enriched` | 6 | Flink (anomalies-enriched-insert) | ASP `anomalies_enriched_ingestion` — merges the LLM reason + `top_chunk_*` evidence onto `analytics.zone_anomalies` docs |
 | `zone_traffic_sink` | 6 | Flink (zone-traffic-sink-insert) | ASP (zone_traffic_ingestion) |
 | `anomalies_sink` | 6 | Flink (anomalies-sink-insert) | ASP (anomalies_ingestion) |
 | `event_documents` | 6 | ASP (event_publication_to_kafka) | Flink (documents_vectordb) |
@@ -273,7 +280,7 @@ These are written by `deploy.py` after Terraform completes. Do not edit manually
 
 | Parameter | Value | Effect |
 |-----------|-------|--------|
-| `minTrainingSize` | 50 | Minimum 50 five-minute windows (~4h 10m) before anomaly output |
+| `minTrainingSize` | 15 | Minimum 15 one-minute windows (~15 min) per zone before anomaly output |
 | `maxTrainingSize` | 7000 | Maximum historical windows for the model |
 | `confidencePercentage` | 99.999 | Only flag very high-confidence anomalies |
 | `enableStl` | false | STL decomposition disabled for simpler model |
@@ -286,11 +293,20 @@ These are written by `deploy.py` after Terraform completes. Do not edit manually
 | `max_iterations` | 10 | Maximum agent reasoning iterations |
 | `allowed_tools` | `get_vessel_catalog, dispatch_boats` | Whitelisted MCP tools |
 
-## Dashboard (Streamlit)
+## Mission Control (UI)
+
+Mission Control is the live HUD served by the SSE sidecar (`scripts/live_server.py`). `uv run deploy` launches it automatically; relaunch manually with `uv run live` (flags: `--host`, `--port`).
 
 | Setting | Value |
 |---------|-------|
-| Port | 8501 |
-| Auto-refresh | Enabled |
-| Default time range | All time |
-| Collections queried | `analytics.zone_traffic`, `analytics.zone_anomalies`, `fleet.dispatch_log`, `events.knowledge_base` |
+| Port | 8502 (deploy picks the first free port in 8502-8510 and records it in `LIVE_SSE_URL`) |
+| Host | `127.0.0.1` (override with `--host`) |
+| Static UI | Serves `web/` same-origin on the same port |
+| Endpoints | `GET /api/bootstrap` (warm-start payload), `GET /api/stream` (SSE change-stream events), `GET /api/health` (watcher status) |
+| Collections watched (change streams) | `analytics.zone_anomalies`, `fleet.dispatch_log`, `analytics.zone_traffic`, `events.knowledge_base` |
+| Collections read at bootstrap | The four watched collections plus `fleet.vessel_catalog` |
+| CORS | Local origins on ports 8501/8502 allowed by default; extend via `LIVE_SSE_ALLOW_ORIGINS` (comma-separated) |
+| RAG fallback | Backfills Atlas `$vectorSearch` evidence chunks onto anomaly docs the best-effort Flink enrichment missed; needs `TF_VAR_voyage_api_key`; head-start delay via `RAG_FALLBACK_DELAY_S` (default 40) |
+| Logs | `logs/live-<port>.log` when launched by deploy |
+
+The Streamlit dashboard (`uv run dashboard`, port 8501) is decommissioned as a product surface; it is kept only for manual legacy use and is no longer launched by deploy.

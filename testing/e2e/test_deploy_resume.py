@@ -11,7 +11,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # TC-RESUME-001: WORK_PHASES + COMPLETE_MARKER constants
 # ---------------------------------------------------------------------------
@@ -166,6 +165,63 @@ def test_TC_RESUME_INV_001_phase_writes_preserved():
         # Each phase must be written to DEPLOY_PHASE somewhere in run_deployment
         assert f'"{phase}"' in src, \
             f"run_deployment must still record DEPLOY_PHASE={phase}"
+
+
+# ---------------------------------------------------------------------------
+# TC-RESUME-END-001: DEPLOY_PHASE marks the LAST COMPLETED phase
+# ---------------------------------------------------------------------------
+# A phase marker written at phase START is a bug: _should_run_phase uses a
+# strictly-greater comparison and _next_work_phase returns the phase AFTER the
+# recorded one, so both assume the recorded phase already COMPLETED. If a phase
+# fails after writing its own marker, resume skips it. These tests pin that each
+# work-phase marker is written only after that phase's work in run_deployment.
+
+def _index_of(src: str, needle: str) -> int:
+    i = src.find(needle)
+    assert i != -1, f"expected to find {needle!r} in run_deployment source"
+    return i
+
+
+def test_TC_RESUME_END_001_flink_dml_marker_follows_work():
+    deploy = importlib.import_module("scripts.deploy")
+    src = inspect.getsource(deploy.run_deployment)
+    # The gating call must precede the success marker for flink_dml.
+    call_pos = _index_of(src, "_create_flink_dml_statements(root)")
+    marker_pos = _index_of(src, '_save_env("DEPLOY_PHASE", "flink_dml")')
+    assert call_pos < marker_pos, (
+        "DEPLOY_PHASE=flink_dml must be written AFTER _create_flink_dml_statements "
+        "so a failed phase is re-run on resume, not skipped"
+    )
+
+
+def test_TC_RESUME_END_002_publish_data_marker_follows_work():
+    deploy = importlib.import_module("scripts.deploy")
+    src = inspect.getsource(deploy.run_deployment)
+    call_pos = _index_of(src, "_publish_local_data(root)")
+    marker_pos = _index_of(src, '_save_env("DEPLOY_PHASE", "publish_data")')
+    assert call_pos < marker_pos, (
+        "DEPLOY_PHASE=publish_data must be written AFTER _publish_local_data"
+    )
+
+
+def test_TC_RESUME_END_003_terraform_marker_follows_apply():
+    deploy = importlib.import_module("scripts.deploy")
+    src = inspect.getsource(deploy.run_deployment)
+    apply_pos = _index_of(src, "All Terraform deployments completed successfully")
+    marker_pos = _index_of(src, '_save_env("DEPLOY_PHASE", "terraform")')
+    assert apply_pos < marker_pos, (
+        "DEPLOY_PHASE=terraform must be written AFTER the apply loop succeeds"
+    )
+
+
+def test_TC_RESUME_END_004_failing_phase_is_rerun_not_skipped():
+    """Semantic check: with DEPLOY_PHASE=credentials (last COMPLETED), the next
+    phase (publish_data) must run and credentials must be skipped."""
+    deploy = importlib.import_module("scripts.deploy")
+    args = SimpleNamespace(force=False, from_phase=None)
+    env = {"DEPLOY_PHASE": "credentials"}
+    assert not deploy._should_run_phase("credentials", env, args)
+    assert deploy._should_run_phase("publish_data", env, args)
 
 
 # ---------------------------------------------------------------------------

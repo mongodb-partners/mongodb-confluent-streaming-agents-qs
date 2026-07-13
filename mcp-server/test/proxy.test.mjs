@@ -204,3 +204,62 @@ test('proxy injects Accept: application/json, text/event-stream', async () => {
   assert.ok(observedAccept.includes('text/event-stream'),
             `Accept must include text/event-stream; got ${observedAccept}`);
 });
+
+// ─── Request body size cap ────────────────────────────────────
+
+test('oversized request body → 413 and upstream never contacted', async () => {
+  let upstreamHits = 0;
+  ({ srv: upstream, port: upstreamPort } = await listenOnRandomPort((req, res) => {
+    upstreamHits += 1;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{}');
+  }));
+  // Tiny cap so the test payload trips it.
+  proxy = await startProxy({ targetPort: upstreamPort, listenPort: 0, maxBodyBytes: 64 });
+  proxyPort = proxy.address().port;
+
+  const big = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'x', params: 'A'.repeat(500) });
+  const res = await getJson(proxyPort, '/mcp', big);
+  assert.equal(res.statusCode, 413, 'oversized body must be rejected with 413');
+  assert.match(res.headers['content-type'] || '', /^application\/json/);
+  assert.equal(upstreamHits, 0, 'upstream must NOT be contacted for an oversized body');
+});
+
+test('body within cap is proxied normally', async () => {
+  ({ srv: upstream, port: upstreamPort } = await listenOnRandomPort((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"ok":true}');
+  }));
+  proxy = await startProxy({ targetPort: upstreamPort, listenPort: 0, maxBodyBytes: 4096 });
+  proxyPort = proxy.address().port;
+
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' });
+  const res = await getJson(proxyPort, '/mcp', body);
+  assert.equal(res.statusCode, 200);
+});
+
+// ─── Hop-by-hop header stripping ──────────────────────────────
+
+test('hop-by-hop headers are not forwarded upstream', async () => {
+  let forwarded = null;
+  ({ srv: upstream, port: upstreamPort } = await listenOnRandomPort((req, res) => {
+    forwarded = { ...req.headers };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{}');
+  }));
+  proxy = await startProxy({ targetPort: upstreamPort, listenPort: 0 });
+  proxyPort = proxy.address().port;
+
+  await new Promise((resolve, reject) => {
+    const req = httpRequest({
+      hostname: '127.0.0.1', port: proxyPort, path: '/mcp', method: 'GET',
+      headers: { 'X-Keep': 'yes', 'Upgrade': 'websocket', 'Keep-Alive': 'timeout=5' },
+    }, (res) => { res.on('data', () => {}); res.on('end', resolve); });
+    req.on('error', reject);
+    req.end();
+  });
+
+  assert.equal(forwarded['upgrade'], undefined, 'upgrade (hop-by-hop) must be stripped');
+  assert.equal(forwarded['keep-alive'], undefined, 'keep-alive (hop-by-hop) must be stripped');
+  assert.equal(forwarded['x-keep'], 'yes', 'non-hop-by-hop headers must pass through');
+});

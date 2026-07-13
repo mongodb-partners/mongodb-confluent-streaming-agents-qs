@@ -10,7 +10,6 @@ import importlib
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # TC-PRE-001: _check_atlas_admin_auth
 # ---------------------------------------------------------------------------
@@ -527,6 +526,7 @@ def test_TC_PRE_CLUSTER_012_integration_via_run_preflight(monkeypatch):
     """
     pre = importlib.import_module("scripts.preflight")
     import requests
+
     # All other asp_setup-phase checks pass; only atlas_cluster_exists
     # should produce a fail.
     monkeypatch.setattr(requests, "get",
@@ -644,6 +644,7 @@ def test_TC_PRE_CLUSTER_018_run_preflight_aggregation_handles_skip(monkeypatch):
     the check explicitly skipped itself."""
     pre = importlib.import_module("scripts.preflight")
     import requests
+
     # Stub responses for all asp_setup-phase checks. atlas_cluster_exists
     # is skipped (won't hit network). atlas_admin_auth needs ONE 200.
     stub = _ListBackedSession([_StubResponse(200)])

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Generate 10 pre-baked ride_requests batches with engineered anomalies.
+"""DEPRECATED — use ``scripts/generate_batch_data.py`` instead.
+
+This module is the legacy batch generator. It writes the SAME output files
+(``assets/data/batch_*.jsonl`` and ``ride_requests.jsonl``) as
+``generate_batch_data.py`` but uses the old ``avro`` library rather than
+``fastavro`` and a different windowing scheme, so running BOTH clobbers each
+other's output. ``generate_batch_data.py`` is the maintained generator (it is
+what ``surge.py`` and the deploy flow reuse). This file is retained only for
+historical reference and will be removed; do not add new callers.
 
 Each batch covers 6 hours of data (enough for 72 five-minute windows per zone).
 With minTrainingSize=50, anomalies start appearing from batch 1 since the full
@@ -7,8 +15,8 @@ original dataset (288 windows) is always published first as the baseline.
 
 Anomaly zones rotate across batches so the demo shows different zones spiking.
 
-Usage:
-    python scripts/generate_batches.py
+Usage (deprecated):
+    python scripts/generate_batches.py --i-know-this-is-deprecated
     # Generates assets/data/batch_01.jsonl through batch_10.jsonl
 """
 
@@ -184,4 +192,16 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys as _sys
+
+    if "--i-know-this-is-deprecated" not in _sys.argv:
+        print(
+            "REFUSING TO RUN: scripts/generate_batches.py is DEPRECATED and "
+            "clobbers the output of the maintained generator.\n"
+            "Use:  uv run python -m scripts.generate_batch_data\n"
+            "If you really need the legacy generator, re-run with "
+            "--i-know-this-is-deprecated.",
+            file=_sys.stderr,
+        )
+        _sys.exit(2)
     main()

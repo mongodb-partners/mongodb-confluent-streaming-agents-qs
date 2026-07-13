@@ -37,6 +37,15 @@ mcp_commands.txt
 # CLI run logs (deploy/destroy transcripts)
 logs/
 
+# Local spec-driven-TDD artifacts — never committed
+specs/
+
+# Local webinar narration script — never committed
+story.md
+
+# playwright-cli session artifacts
+.playwright-cli/
+
 # Archive (development artifacts, deployment snapshots)
 archive/
 

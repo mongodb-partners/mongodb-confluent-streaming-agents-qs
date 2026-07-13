@@ -34,11 +34,15 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.common.http_auth import basic_auth_token
+
 try:
     import requests
     from requests.auth import HTTPDigestAuth
 except ImportError:
-    print("Error: 'requests' package is required. Install with: uv pip install requests")
+    print(
+        "Error: 'requests' package is required. Install with: uv pip install requests"
+    )
     sys.exit(1)
 
 try:
@@ -47,7 +51,9 @@ try:
     # the import presence still gates the guard.
     from pymongo import MongoClient  # noqa: F401
     from pymongo.errors import ConnectionFailure, OperationFailure
+
     from scripts.common.mongo import build_uri, get_client
+
     HAS_PYMONGO = True
 except ImportError:
     HAS_PYMONGO = False
@@ -60,12 +66,18 @@ except ImportError:
 # preserves the old behavior on broken installs.
 try:
     from scripts.preflight import check_atlas_cluster_exists
+
     _CLUSTER_PREFLIGHT_AVAILABLE = True
 except Exception:  # noqa: BLE001 — any failure must not block asp_setup
     _CLUSTER_PREFLIGHT_AVAILABLE = False
+
     def check_atlas_cluster_exists(env):  # type: ignore[no-redef]
         from types import SimpleNamespace
-        return SimpleNamespace(status="warn", message="preflight unavailable", remediation=None)
+
+        return SimpleNamespace(
+            status="warn", message="preflight unavailable", remediation=None
+        )
+
 
 # -- Constants ----------------------------------------------------------------
 ATLAS_API_BASE = "https://cloud.mongodb.com/api/atlas/v2"
@@ -97,7 +109,9 @@ def _compute_document_id(event_name: str, zone: str) -> str:
     """
     raw = f"{event_name or ''}-{zone or ''}".lower()
     # Strip non-ASCII (accents → base letters)
-    folded = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    folded = (
+        unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    )
     slug = _DOCUMENT_ID_RE.sub("-", folded)
     return slug.strip("-")
 
@@ -179,8 +193,9 @@ class AtlasAPI:
             pass
         # HTTP-date form
         try:
-            from email.utils import parsedate_to_datetime
             from datetime import datetime, timezone
+            from email.utils import parsedate_to_datetime
+
             dt = parsedate_to_datetime(value)
             if dt is None:
                 return None
@@ -193,7 +208,9 @@ class AtlasAPI:
             return None
 
     def _request_with_retry(
-        self, method: str, path: str,
+        self,
+        method: str,
+        path: str,
         idempotent: bool | None = None,
         **kwargs,
     ) -> requests.Response:
@@ -215,7 +232,10 @@ class AtlasAPI:
             try:
                 resp = requests.request(method, url, auth=self.auth, **kwargs)
                 # Retry on documented transient statuses.
-                if attempt < self.MAX_ATTEMPTS - 1 and resp.status_code in self.RETRY_STATUSES:
+                if (
+                    attempt < self.MAX_ATTEMPTS - 1
+                    and resp.status_code in self.RETRY_STATUSES
+                ):
                     # don't retry 5xx on non-idempotent methods.
                     if resp.status_code in (500, 502, 503, 504) and not idempotent:
                         return resp
@@ -246,11 +266,15 @@ class AtlasAPI:
 
     def get(self, path: str, api_version: str | None = None) -> requests.Response:
         return self._request_with_retry(
-            "GET", path, headers=self._headers(api_version),
+            "GET",
+            path,
+            headers=self._headers(api_version),
         )
 
     def post(
-        self, path: str, body: dict,
+        self,
+        path: str,
+        body: dict,
         api_version: str | None = None,
         idempotent: bool = False,
     ) -> requests.Response:
@@ -262,7 +286,8 @@ class AtlasAPI:
         503 is safe.
         """
         return self._request_with_retry(
-            "POST", path,
+            "POST",
+            path,
             headers=self._headers(api_version),
             json=body,
             idempotent=idempotent,
@@ -270,7 +295,9 @@ class AtlasAPI:
 
     def delete(self, path: str, api_version: str | None = None) -> requests.Response:
         return self._request_with_retry(
-            "DELETE", path, headers=self._headers(api_version),
+            "DELETE",
+            path,
+            headers=self._headers(api_version),
         )
 
 
@@ -288,7 +315,9 @@ def ensure_asp_instance(api: AtlasAPI, cluster_name: str) -> dict:
 
     for inst in instances:
         if inst.get("name") == ASP_INSTANCE_NAME:
-            print(f"  ✓ Instance '{ASP_INSTANCE_NAME}' already exists (id={inst.get('_id', inst.get('id', 'N/A'))})")
+            print(
+                f"  ✓ Instance '{ASP_INSTANCE_NAME}' already exists (id={inst.get('_id', inst.get('id', 'N/A'))})"
+            )
             return inst
 
     # Create new instance
@@ -317,7 +346,9 @@ def ensure_asp_instance(api: AtlasAPI, cluster_name: str) -> dict:
         print(f"  ✗ API error {resp.status_code}: {resp.text}")
     resp.raise_for_status()
     instance = resp.json()
-    print(f"  ✓ Created instance '{ASP_INSTANCE_NAME}' (id={instance.get('id', 'pending')})")
+    print(
+        f"  ✓ Created instance '{ASP_INSTANCE_NAME}' (id={instance.get('id', 'pending')})"
+    )
 
     # Wait for instance to become ACTIVE (has hostnames)
     print("  Waiting for instance to become ACTIVE...")
@@ -329,7 +360,9 @@ def ensure_asp_instance(api: AtlasAPI, cluster_name: str) -> dict:
         hostnames = inst_data.get("hostnames", [])
         state = inst_data.get("stateName", "")
         if hostnames or state == "ACTIVE":
-            print(f"  ✓ Instance is ACTIVE (hostnames: {hostnames[0] if hostnames else 'N/A'})")
+            print(
+                f"  ✓ Instance is ACTIVE (hostnames: {hostnames[0] if hostnames else 'N/A'})"
+            )
             return inst_data
         print(f"    ... state: {state or 'provisioning'}")
 
@@ -376,7 +409,7 @@ def ensure_connections(
     # Strip SASL_SSL:// prefix if present (Terraform outputs include it, ASP API rejects it)
     clean_bootstrap = bootstrap_server
     if clean_bootstrap.startswith("SASL_SSL://"):
-        clean_bootstrap = clean_bootstrap[len("SASL_SSL://"):]
+        clean_bootstrap = clean_bootstrap[len("SASL_SSL://") :]
 
     connections = [
         {
@@ -432,17 +465,19 @@ def ensure_connections(
 
     # Add Schema Registry connection if credentials are provided
     if schema_registry_url and schema_registry_key and schema_registry_secret:
-        connections.append({
-            "name": "confluent_schema_registry",
-            "type": "SchemaRegistry",
-            "provider": "CONFLUENT",
-            "schemaRegistryUrls": [schema_registry_url],
-            "schemaRegistryAuthentication": {
-                "type": "USER_INFO",
-                "username": schema_registry_key,
-                "password": schema_registry_secret,
-            },
-        })
+        connections.append(
+            {
+                "name": "confluent_schema_registry",
+                "type": "SchemaRegistry",
+                "provider": "CONFLUENT",
+                "schemaRegistryUrls": [schema_registry_url],
+                "schemaRegistryAuthentication": {
+                    "type": "USER_INFO",
+                    "username": schema_registry_key,
+                    "password": schema_registry_secret,
+                },
+            }
+        )
 
     # If any connections need updating, stop active processors first.
     # Connections can't be deleted while processors that use them are STARTED.
@@ -456,6 +491,7 @@ def ensure_connections(
         )
         if proc_resp.ok:
             import time as _time
+
             # stop EVERY non-terminal processor,
             # not just STARTED ones. A processor left STOPPING by a prior
             # interrupted run still HOLDS its connections, so a later
@@ -487,8 +523,10 @@ def ensure_connections(
                             api_version=proc_api_ver,
                         )
                     except Exception as _exc:
-                        print(f"    [warn] :stop {pname} raised {type(_exc).__name__} "
-                              f"(will still poll for STOPPED)")
+                        print(
+                            f"    [warn] :stop {pname} raised {type(_exc).__name__} "
+                            f"(will still poll for STOPPED)"
+                        )
                 to_wait.append(pname)
 
             # Poll ALL non-terminal processors to {STOPPED, FAILED}
@@ -528,6 +566,7 @@ def ensure_connections(
     # the caller (which couldn't detect partial failure).
     failures: list[str] = []
     import time as _time
+
     for conn in connections:
         name = conn["name"]
         if name in existing:
@@ -567,8 +606,10 @@ def ensure_connections(
                 t = max(1.0, min(3.0, remaining))
                 try:
                     probe = requests.get(
-                        probe_url, auth=api.auth,
-                        headers=probe_headers, timeout=(t, t),
+                        probe_url,
+                        auth=api.auth,
+                        headers=probe_headers,
+                        timeout=(t, t),
                     )
                     if probe.status_code == 404:
                         gone = True
@@ -595,7 +636,8 @@ def ensure_connections(
         # is still draining; treat as failure rather than skip-success.
         was_delete_recreate = name in existing
         resp = api.post(
-            f"/streams/{ASP_INSTANCE_NAME}/connections", conn,
+            f"/streams/{ASP_INSTANCE_NAME}/connections",
+            conn,
             idempotent=True,
         )
         if resp.status_code == 409:
@@ -622,13 +664,17 @@ def ensure_connections(
     if failures:
         raise RuntimeError(
             "ensure_connections failed for "
-            f"{len(failures)} connection(s):\n  - "
-            + "\n  - ".join(failures)
+            f"{len(failures)} connection(s):\n  - " + "\n  - ".join(failures)
         )
 
 
 # -- Kafka Topic Pre-creation -------------------------------------------------
-REQUIRED_KAFKA_TOPICS = ["event_documents", "completed_actions", "zone_traffic_sink", "anomalies_sink"]
+REQUIRED_KAFKA_TOPICS = [
+    "event_documents",
+    "completed_actions",
+    "zone_traffic_sink",
+    "anomalies_sink",
+]
 
 
 def ensure_kafka_topics(
@@ -643,22 +689,23 @@ def ensure_kafka_topics(
     authenticates immediately — unlike the SASL_SSL broker path that can
     take 2-5+ minutes for API key propagation after terraform creates it.
     """
-    import base64
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     print(f"\n{'='*60}")
     print("Step 2b: Kafka Topic Pre-creation")
     print(f"{'='*60}")
 
     if not kafka_rest_endpoint or not cluster_id:
-        print("  ⚠ Kafka REST endpoint or cluster ID not available — skipping topic pre-creation.")
+        print(
+            "  ⚠ Kafka REST endpoint or cluster ID not available — skipping topic pre-creation."
+        )
         print("    Ensure these topics exist before starting processors:")
         for t in REQUIRED_KAFKA_TOPICS:
             print(f"      - {t}")
         return
 
-    cred = base64.b64encode(f"{confluent_api_key}:{confluent_api_secret}".encode()).decode()
+    cred = basic_auth_token(confluent_api_key, confluent_api_secret)
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Basic {cred}",
@@ -677,10 +724,14 @@ def ensure_kafka_topics(
         except urllib.error.HTTPError as e:
             if e.code == 401 and attempt < max_probe_attempts - 1:
                 wait = 30
-                print(f"  ⏳ Kafka REST auth not ready, retrying in {wait}s... (HTTP 401)")
+                print(
+                    f"  ⏳ Kafka REST auth not ready, retrying in {wait}s... (HTTP 401)"
+                )
                 time.sleep(wait)
             elif e.code == 401:
-                print("  ✗ Kafka REST API key not propagated after retries — skipping topic creation")
+                print(
+                    "  ✗ Kafka REST API key not propagated after retries — skipping topic creation"
+                )
                 print("    Topics will be created by the Flink DML step later.")
                 return
             else:
@@ -689,7 +740,9 @@ def ensure_kafka_topics(
             break
 
     for topic_name in REQUIRED_KAFKA_TOPICS:
-        check_url = f"{kafka_rest_endpoint}/kafka/v3/clusters/{cluster_id}/topics/{topic_name}"
+        check_url = (
+            f"{kafka_rest_endpoint}/kafka/v3/clusters/{cluster_id}/topics/{topic_name}"
+        )
         req = urllib.request.Request(check_url, headers=headers)
         try:
             urllib.request.urlopen(req, timeout=15)
@@ -697,16 +750,22 @@ def ensure_kafka_topics(
             continue
         except urllib.error.HTTPError as e:
             if e.code != 404:
-                print(f"  ⚠ Unexpected status checking topic '{topic_name}': HTTP {e.code}")
+                print(
+                    f"  ⚠ Unexpected status checking topic '{topic_name}': HTTP {e.code}"
+                )
         except Exception:
             pass
 
         create_url = f"{kafka_rest_endpoint}/kafka/v3/clusters/{cluster_id}/topics"
-        body = json.dumps({
-            "topic_name": topic_name,
-            "partitions_count": 6,
-        }).encode()
-        create_req = urllib.request.Request(create_url, data=body, method="POST", headers=headers)
+        body = json.dumps(
+            {
+                "topic_name": topic_name,
+                "partitions_count": 6,
+            }
+        ).encode()
+        create_req = urllib.request.Request(
+            create_url, data=body, method="POST", headers=headers
+        )
         try:
             urllib.request.urlopen(create_req, timeout=30)
             print(f"  ✓ Created topic '{topic_name}'")
@@ -721,6 +780,7 @@ def ensure_kafka_topics(
 
 
 # -- Pipeline Definitions -----------------------------------------------------
+
 
 def _pipeline_event_knowledge_base() -> list:
     """Pipeline 1: events.calendar -> Voyage AI embed -> events.knowledge_base"""
@@ -741,7 +801,12 @@ def _pipeline_event_knowledge_base() -> list:
                 "validator": {
                     "$jsonSchema": {
                         "bsonType": "object",
-                        "required": ["event_name", "zone", "description", "event_time_start"],
+                        "required": [
+                            "event_name",
+                            "zone",
+                            "description",
+                            "event_time_start",
+                        ],
                         "properties": {
                             "event_name": {"bsonType": "string"},
                             "zone": {"bsonType": "string"},
@@ -943,7 +1008,9 @@ def _pipeline_dispatch_log() -> list:
                         "properties": {
                             "pickup_zone": {"bsonType": "string"},
                             "dispatch_summary": {"bsonType": "string"},
-                            "window_time": {"bsonType": ["long", "int", "double", "date"]},
+                            "window_time": {
+                                "bsonType": ["long", "int", "double", "date"]
+                            },
                             "dispatch_json": {"bsonType": ["string", "null"]},
                             "api_response": {"bsonType": ["string", "null"]},
                         },
@@ -1018,8 +1085,12 @@ def _pipeline_zone_traffic_ingestion() -> list:
                         "required": ["zone", "window_start"],
                         "properties": {
                             "zone": {"bsonType": "string"},
-                            "window_start": {"bsonType": ["long", "int", "double", "date"]},
-                            "window_end": {"bsonType": ["long", "int", "double", "date"]},
+                            "window_start": {
+                                "bsonType": ["long", "int", "double", "date"]
+                            },
+                            "window_end": {
+                                "bsonType": ["long", "int", "double", "date"]
+                            },
                         },
                     }
                 },
@@ -1085,7 +1156,9 @@ def _pipeline_anomalies_ingestion() -> list:
                         "required": ["pickup_zone", "window_time"],
                         "properties": {
                             "pickup_zone": {"bsonType": "string"},
-                            "window_time": {"bsonType": ["long", "int", "double", "date"]},
+                            "window_time": {
+                                "bsonType": ["long", "int", "double", "date"]
+                            },
                         },
                     }
                 },
@@ -1122,8 +1195,81 @@ def _pipeline_anomalies_ingestion() -> list:
     ]
 
 
+def _pipeline_anomalies_enriched_ingestion() -> list:
+    """Pipeline 6: Kafka anomalies_enriched -> analytics.zone_anomalies (merge).
+
+    The RAG path (anomalies-enriched-insert: Voyage query embedding →
+    VECTOR_SEARCH_AGG → LLM explanation) is best-effort and slower than
+    detection, so anomalies-sink-insert writes each anomaly first with a
+    synthesized anomaly_reason and NULL top_chunk_*. When the enriched record
+    lands, this processor overlays the LLM's anomaly_reason and the retrieved
+    top_chunk_1..3 onto the SAME document (`whenMatched: merge`, keyed by the
+    unique {pickup_zone, window_time} index). Mission Control re-renders the
+    anomaly card via the change-stream update. Without this processor the
+    anomalies_enriched topic has no consumer and RAG context never reaches
+    the UI.
+    """
+    return [
+        {
+            "$source": {
+                "connectionName": "kafka_confluent",
+                "topic": "anomalies_enriched",
+                "schemaRegistry": {
+                    "connectionName": "confluent_schema_registry",
+                },
+            }
+        },
+        {
+            "$validate": {
+                "validator": {
+                    "$jsonSchema": {
+                        "bsonType": "object",
+                        "required": ["pickup_zone", "window_time"],
+                        "properties": {
+                            "pickup_zone": {"bsonType": "string"},
+                            "window_time": {
+                                "bsonType": ["long", "int", "double", "date"]
+                            },
+                        },
+                    }
+                },
+                "validationAction": "dlq",
+            }
+        },
+        {
+            "$match": {
+                "pickup_zone": {"$type": "string"},
+                "window_time": {"$type": ["long", "int", "double", "date"]},
+            }
+        },
+        {
+            "$addFields": {
+                "window_time": {"$toDate": "$window_time"},
+                # per-document stream timestamp ($$NOW is rejected by ASP)
+                "enriched_at": "$_stream_meta.source.ts",
+            }
+        },
+        {
+            "$merge": {
+                "into": {
+                    "connectionName": "atlas_cluster",
+                    "db": "analytics",
+                    "coll": "zone_anomalies",
+                },
+                "on": ["pickup_zone", "window_time"],
+                # merge (NOT replace): overlay the RAG fields without
+                # clobbering detected_at/ingested_at from the sink path.
+                "whenMatched": "merge",
+                "whenNotMatched": "insert",
+            }
+        },
+    ]
+
+
 # -- Stream Processors --------------------------------------------------------
-def _start_processor_with_retry(api: "AtlasAPI", name: str, max_retries: int = 6) -> bool:
+def _start_processor_with_retry(
+    api: "AtlasAPI", name: str, max_retries: int = 6
+) -> bool:
     """Start a processor, retrying on transient failures.
 
     Retries on:
@@ -1196,18 +1342,14 @@ def ensure_processors(api: AtlasAPI) -> bool:
     for p in resp.json().get("results", []):
         existing[p["name"]] = p
 
+    # NOTE: event_knowledge_base_population was removed. Its ASP $https call to
+    # Voyage (ai.mongodb.com) fails at the transport layer with HTTP 400 even
+    # though the byte-identical request succeeds from curl/requests (isolated
+    # 2026-07-12 via webhook capture). The knowledge base is now populated in
+    # Python by populate_knowledge_base() — the seed events are static, so a
+    # one-time seed-time embed is both the fix and a simplification. See
+    # _voyage_embed() for the full diagnosis.
     processors = [
-        {
-            "name": "event_knowledge_base_population",
-            "pipeline": _pipeline_event_knowledge_base(),
-            "options": {
-                "dlq": {
-                    "connectionName": "events_dlq",
-                    "db": "events",
-                    "coll": "validation_dlq",
-                },
-            },
-        },
         {
             "name": "event_publication_to_kafka",
             "pipeline": _pipeline_event_publication(),
@@ -1252,6 +1394,17 @@ def ensure_processors(api: AtlasAPI) -> bool:
                 },
             },
         },
+        {
+            "name": "anomalies_enriched_ingestion",
+            "pipeline": _pipeline_anomalies_enriched_ingestion(),
+            "options": {
+                "dlq": {
+                    "connectionName": "events_dlq",
+                    "db": "events",
+                    "coll": "validation_dlq",
+                },
+            },
+        },
     ]
 
     for proc_def in processors:
@@ -1276,7 +1429,9 @@ def ensure_processors(api: AtlasAPI) -> bool:
                 # if it failed (the delete below is the operation that matters
                 # and is checked explicitly).
                 if not (stop_resp.ok or stop_resp.status_code == 404):
-                    print(f"    [warn] :stop on '{name}' returned {stop_resp.status_code} (continuing to delete)")
+                    print(
+                        f"    [warn] :stop on '{name}' returned {stop_resp.status_code} (continuing to delete)"
+                    )
                 del_resp = api.delete(
                     f"/streams/{ASP_INSTANCE_NAME}/processor/{name}",
                     api_version=proc_api_ver,
@@ -1284,7 +1439,9 @@ def ensure_processors(api: AtlasAPI) -> bool:
                 if del_resp.ok or del_resp.status_code == 404:
                     print(f"    ✓ Deleted '{name}'")
                 else:
-                    print(f"    ✗ Could not delete '{name}': {del_resp.status_code} {del_resp.text}")
+                    print(
+                        f"    ✗ Could not delete '{name}': {del_resp.status_code} {del_resp.text}"
+                    )
                     continue
                 # Fall through to create + start below
             elif state in ("STOPPED", "CREATED"):
@@ -1308,7 +1465,9 @@ def ensure_processors(api: AtlasAPI) -> bool:
         if resp.status_code == 409:
             print(f"  ✓ Processor '{name}' already exists (409 conflict)")
         elif not resp.ok:
-            print(f"  ✗ Failed to create processor '{name}': {resp.status_code} {resp.text}")
+            print(
+                f"  ✗ Failed to create processor '{name}': {resp.status_code} {resp.text}"
+            )
             continue
         else:
             print(f"  ✓ Created processor '{name}'")
@@ -1354,12 +1513,18 @@ def _ensure_kb_collection(client) -> None:
         # expected idempotent path; anything else we also tolerate so
         # the broader index step proceeds and surfaces the real error.
         msg = str(e).lower()
-        if "exist" in msg or "namespace" in msg or type(e).__name__ == "CollectionInvalid":
+        if (
+            "exist" in msg
+            or "namespace" in msg
+            or type(e).__name__ == "CollectionInvalid"
+        ):
             return
         print(f"  ⚠ _ensure_kb_collection: {type(e).__name__}: {e}")
 
 
-def _ensure_kb_collection_via_creds(connection_string: str, username: str, password: str) -> None:
+def _ensure_kb_collection_via_creds(
+    connection_string: str, username: str, password: str
+) -> None:
     """Connect via pymongo and ensure events.knowledge_base exists.
 
     Thin wrapper around _ensure_kb_collection that owns the connection.
@@ -1371,8 +1536,11 @@ def _ensure_kb_collection_via_creds(connection_string: str, username: str, passw
         return
     try:
         uri = build_uri(connection_string, username, password)
-        client = get_client(uri, app_name="streaming-agents-asp-kb-collection",
-                            server_selection_timeout_ms=10000)
+        client = get_client(
+            uri,
+            app_name="streaming-agents-asp-kb-collection",
+            server_selection_timeout_ms=10000,
+        )
         client.admin.command("ping")
         _ensure_kb_collection(client)
     except Exception as e:  # noqa: BLE001
@@ -1452,17 +1620,23 @@ def ensure_atlas_indexes(
         # No collection yet → no indexes. Fall through to create.
         existing_indexes = []
     else:
-        print(f"  ⚠ Could not check existing search indexes: {resp.status_code} {resp.text}")
+        print(
+            f"  ⚠ Could not check existing search indexes: {resp.status_code} {resp.text}"
+        )
 
     if existing_indexes is not None:
         for idx in existing_indexes:
             if idx.get("name") == "vector_index":
-                print("  ✓ Vector search index 'vector_index' already exists on events.knowledge_base")
+                print(
+                    "  ✓ Vector search index 'vector_index' already exists on events.knowledge_base"
+                )
                 break
         else:
             # Create vector search index
             # search index create is name-idempotent. Allow 5xx retry.
-            print("  Creating vector search index 'vector_index' on events.knowledge_base...")
+            print(
+                "  Creating vector search index 'vector_index' on events.knowledge_base..."
+            )
             create_resp = api.post(
                 f"/clusters/{cluster_name}/search/indexes",
                 {
@@ -1476,7 +1650,9 @@ def ensure_atlas_indexes(
             if create_resp.ok or create_resp.status_code == 409:
                 print("  ✓ Created vector search index 'vector_index'")
             else:
-                print(f"  ⚠ Could not create vector search index: {create_resp.status_code} {create_resp.text}")
+                print(
+                    f"  ⚠ Could not create vector search index: {create_resp.status_code} {create_resp.text}"
+                )
 
     # previously-defined Atlas Search indexes on
     # zone_anomalies and dispatch_log were removed because no caller
@@ -1496,8 +1672,11 @@ def ensure_atlas_indexes(
     uri = build_uri(connection_string, username, password)
 
     try:
-        client = get_client(uri, app_name="streaming-agents-asp-indexes",
-                            server_selection_timeout_ms=10000)
+        client = get_client(
+            uri,
+            app_name="streaming-agents-asp-indexes",
+            server_selection_timeout_ms=10000,
+        )
         client.admin.command("ping")
     except ConnectionFailure as e:
         print(f"  ⚠ Cannot connect to MongoDB for indexes: {e}")
@@ -1519,8 +1698,10 @@ def ensure_atlas_indexes(
             {"window_start": {"$type": ["long", "int", "double"]}}
         )
         if legacy.deleted_count:
-            print(f"  ✓ Purged {legacy.deleted_count} legacy epoch-millis rows "
-                  f"from analytics.zone_traffic (TTL no-op rows)")
+            print(
+                f"  ✓ Purged {legacy.deleted_count} legacy epoch-millis rows "
+                f"from analytics.zone_traffic (TTL no-op rows)"
+            )
     except Exception as e:
         print(f"  ⚠ Could not purge legacy zone_traffic rows: {e}")
     zone_traffic.create_index(
@@ -1538,8 +1719,10 @@ def ensure_atlas_indexes(
             {"window_time": {"$type": ["long", "int", "double"]}}
         )
         if legacy.deleted_count:
-            print(f"  ✓ Purged {legacy.deleted_count} legacy epoch-millis rows "
-                  f"from analytics.zone_anomalies")
+            print(
+                f"  ✓ Purged {legacy.deleted_count} legacy epoch-millis rows "
+                f"from analytics.zone_anomalies"
+            )
     except Exception as e:
         print(f"  ⚠ Could not purge legacy zone_anomalies rows: {e}")
     zone_anomalies.create_index(
@@ -1624,8 +1807,10 @@ def ensure_atlas_indexes(
     try:
         purged = kb_coll.delete_many({"document_id": {"$exists": False}})
         if purged.deleted_count:
-            print(f"  ✓ Purged {purged.deleted_count} knowledge_base docs "
-                  f"missing document_id (would block full unique index)")
+            print(
+                f"  ✓ Purged {purged.deleted_count} knowledge_base docs "
+                f"missing document_id (would block full unique index)"
+            )
     except Exception as e:
         print(f"  ⚠ Could not purge null-document_id docs: {e}")
     # Drop a legacy PARTIAL index of the same name so the full unique
@@ -1639,7 +1824,9 @@ def ensure_atlas_indexes(
     except OperationFailure:
         pass
     kb_coll.create_index(
-        "document_id", unique=True, name="document_id_unique",
+        "document_id",
+        unique=True,
+        name="document_id_unique",
     )
     print("  ✓ Ensured FULL unique index on events.knowledge_base.document_id")
 
@@ -1660,11 +1847,19 @@ def _dedupe_dispatch_log(coll) -> None:
     """
     try:
         pipeline = [
-            {"$match": {"pickup_zone": {"$exists": True}, "window_time": {"$exists": True}}},
+            {
+                "$match": {
+                    "pickup_zone": {"$exists": True},
+                    "window_time": {"$exists": True},
+                }
+            },
             {"$sort": {"dispatched_at": -1}},
             {
                 "$group": {
-                    "_id": {"pickup_zone": "$pickup_zone", "window_time": "$window_time"},
+                    "_id": {
+                        "pickup_zone": "$pickup_zone",
+                        "window_time": "$window_time",
+                    },
                     "ids": {"$push": "$_id"},
                     "count": {"$sum": 1},
                 }
@@ -1742,12 +1937,14 @@ def _apply_collection_validators(client) -> None:
         except Exception:
             pass  # CollectionInvalid means it already exists
         try:
-            client[db_name].command({
-                "collMod": coll_name,
-                "validator": {"$jsonSchema": schema},
-                "validationLevel": "moderate",
-                "validationAction": "warn",
-            })
+            client[db_name].command(
+                {
+                    "collMod": coll_name,
+                    "validator": {"$jsonSchema": schema},
+                    "validationLevel": "moderate",
+                    "validationAction": "warn",
+                }
+            )
             print(f"  ✓ Applied $jsonSchema validator to {db_name}.{coll_name}")
         except Exception as e:
             print(f"  ⚠ Could not apply validator to {db_name}.{coll_name}: {e}")
@@ -1757,7 +1954,7 @@ def _apply_collection_validators(client) -> None:
 SEED_EVENTS = [
     {
         "event_name": "Essence Music Festival",
-        "zone": "CBD",
+        "zone": "Central Business District (CBD)",
         "description": (
             "The Essence Music Festival is a massive annual music festival held "
             "in the Central Business District of New Orleans. Featuring top R&B, "
@@ -1796,7 +1993,7 @@ SEED_EVENTS = [
     },
     {
         "event_name": "Saints Game",
-        "zone": "CBD",
+        "zone": "Central Business District (CBD)",
         "description": (
             "New Orleans Saints NFL game at the Caesars Superdome in the CBD. "
             "With 73,000 fans, this creates the largest single-venue demand spike "
@@ -1968,8 +2165,11 @@ def seed_events_calendar(connection_string: str, username: str, password: str) -
     uri = build_uri(connection_string, username, password)
 
     try:
-        client = get_client(uri, app_name="streaming-agents-asp-seed-events",
-                            server_selection_timeout_ms=10000)
+        client = get_client(
+            uri,
+            app_name="streaming-agents-asp-seed-events",
+            server_selection_timeout_ms=10000,
+        )
         client.admin.command("ping")
     except ConnectionFailure as e:
         print(f"  ✗ Cannot connect to MongoDB: {e}")
@@ -1987,7 +2187,8 @@ def seed_events_calendar(connection_string: str, username: str, password: str) -
     # (fine at 10 docs, expensive if anyone extends the seed list).
     coll.create_index(
         [("event_name", 1), ("zone", 1)],
-        unique=True, name="event_name_zone_unique",
+        unique=True,
+        name="event_name_zone_unique",
     )
 
     now = datetime.now(timezone.utc)
@@ -2041,6 +2242,159 @@ def seed_events_calendar(connection_string: str, username: str, password: str) -
     print(f"\n  ✓ Seeded {len(SEED_EVENTS)} events ({upserted} new)")
 
 
+def _voyage_embed(
+    texts: list,
+    voyage_api_key: str,
+    voyage_api_endpoint: str = VOYAGE_API_ENDPOINT_DEFAULT,
+    model: str = "voyage-4",
+    input_type: str = "document",
+    timeout: int = 30,
+) -> list:
+    """Embed a batch of texts via the Voyage endpoint, returning a list of
+    float-vectors aligned with ``texts``.
+
+    We embed in Python (not via the ASP ``$https`` operator) because the ASP
+    HTTPS client's low-level transport to ``ai.mongodb.com`` is rejected by the
+    gateway with an HTTP 400 ("request body is not valid JSON") even though the
+    byte-identical request succeeds from curl/requests. Isolated 2026-07-12:
+    the request body ASP emits is a valid bare JSON object with correct
+    headers (verified via webhook capture), so the fault is in ASP↔gateway
+    transport, not the payload — no payload/header/config change fixes it.
+    Since the seed events are static, embedding once at seed time is both a
+    fix and a simplification (removes a fragile streaming dependency).
+
+    Raises on a non-2xx response or a malformed body so the caller can DLQ /
+    surface the failure rather than silently writing null embeddings.
+    """
+    resp = requests.post(
+        voyage_api_endpoint,
+        headers={
+            "Authorization": f"Bearer {voyage_api_key}",
+            "Content-Type": "application/json",
+        },
+        json={"model": model, "input": texts, "input_type": input_type},
+        timeout=timeout,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Voyage embed failed: HTTP {resp.status_code} {resp.text[:200]}"
+        )
+    data = resp.json().get("data")
+    if not isinstance(data, list) or len(data) != len(texts):
+        raise RuntimeError(
+            f"Voyage embed returned {len(data) if isinstance(data, list) else 'no'} "
+            f"vectors for {len(texts)} inputs"
+        )
+    vectors = []
+    for i, item in enumerate(data):
+        emb = (item or {}).get("embedding")
+        if not isinstance(emb, list) or not emb:
+            raise RuntimeError(f"Voyage embed: empty vector at index {i}")
+        vectors.append(emb)
+    return vectors
+
+
+def populate_knowledge_base(
+    connection_string: str,
+    username: str,
+    password: str,
+    voyage_api_key: str,
+    voyage_api_endpoint: str = VOYAGE_API_ENDPOINT_DEFAULT,
+) -> bool:
+    """Embed the seed events and upsert them into events.knowledge_base.
+
+    Replaces the ASP ``event_knowledge_base_population`` change-stream
+    processor, whose ``$https`` call to Voyage fails at the transport layer
+    (see _voyage_embed). Because SEED_EVENTS is static, this Python path is
+    the single source of truth for the RAG knowledge base.
+
+    Idempotent: upserts by ``document_id`` (the same key the Flink
+    ``documents_vectordb`` table and vector index use). Returns True on
+    success, False on any failure (so the caller can warn without aborting
+    the whole deploy — the traffic/anomaly spine works without RAG).
+    """
+    print(f"\n{'='*60}")
+    print("Step 4c: Populate events.knowledge_base (Voyage embeddings)")
+    print(f"{'='*60}")
+
+    if not HAS_PYMONGO:
+        print("  ✗ pymongo not installed — skipping knowledge_base population.")
+        return False
+    if not voyage_api_key:
+        print("  ⊘ No Voyage API key — skipping knowledge_base population.")
+        return False
+
+    uri = build_uri(connection_string, username, password)
+    try:
+        client = get_client(
+            uri,
+            app_name="streaming-agents-asp-kb-populate",
+            server_selection_timeout_ms=10000,
+        )
+        client.admin.command("ping")
+    except ConnectionFailure as e:
+        print(f"  ✗ Cannot connect to MongoDB: {e}")
+        return False
+
+    cal = client["events"]["calendar"]
+    kb = client["events"]["knowledge_base"]
+
+    # Read the seeded calendar docs (source of truth for text + metadata).
+    events = list(cal.find({}))
+    if not events:
+        print("  ⊘ events.calendar is empty — nothing to embed.")
+        return True
+
+    # Embed all descriptions in a single batch call.
+    descriptions = [str(e.get("description") or "") for e in events]
+    try:
+        vectors = _voyage_embed(
+            descriptions, voyage_api_key, voyage_api_endpoint=voyage_api_endpoint
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"  ✗ Voyage embedding failed: {e}")
+        print("    Knowledge base not populated — RAG enrichment will be empty.")
+        return False
+
+    embedded_at = datetime.now(timezone.utc)
+    upserted = 0
+    for event, embedding in zip(events, vectors):
+        document_id = event.get("document_id") or _compute_document_id(
+            event.get("event_name", ""), event.get("zone", "")
+        )
+        doc = {
+            "document_id": document_id,
+            "chunk": event.get("description", ""),
+            "embedding": embedding,
+            "event_name": event.get("event_name"),
+            "event_time_start": event.get("event_time_start"),
+            "event_time_end": event.get("event_time_end"),
+            "venue": event.get("venue"),
+            "expected_attendance": event.get("expected_attendance"),
+            "zone": event.get("zone"),
+            "event_type": event.get("event_type"),
+            "impact_level": event.get("impact_level"),
+            "embedded_at": embedded_at,
+            "embedding_model": "voyage-4",
+            "embedding_dim": len(embedding),
+            "schema_version": 1,
+        }
+        result = kb.update_one(
+            {"document_id": document_id},
+            {"$set": doc},
+            upsert=True,
+        )
+        if result.upserted_id:
+            upserted += 1
+
+    dims = len(vectors[0]) if vectors else 0
+    print(
+        f"  ✓ Populated knowledge_base: {len(events)} events "
+        f"({upserted} new, {dims}-dim vectors)"
+    )
+    return True
+
+
 def seed_vessel_catalog(connection_string: str, username: str, password: str) -> None:
     """Seed fleet.vessel_catalog collection with 31 vessels (upsert by vessel_id)."""
     print(f"\n{'='*60}")
@@ -2064,8 +2418,11 @@ def seed_vessel_catalog(connection_string: str, username: str, password: str) ->
     uri = build_uri(connection_string, username, password)
 
     try:
-        client = get_client(uri, app_name="streaming-agents-asp-seed-vessels",
-                            server_selection_timeout_ms=10000)
+        client = get_client(
+            uri,
+            app_name="streaming-agents-asp-seed-vessels",
+            server_selection_timeout_ms=10000,
+        )
         client.admin.command("ping")
     except ConnectionFailure as e:
         print(f"  ✗ Cannot connect to MongoDB: {e}")
@@ -2143,12 +2500,14 @@ def run_asp_setup(
     # gate, three connection-creates (atlas_cluster, events_dlq,
     # fleet_dlq) all fail with the same 400 — the user gets the right
     # diagnosis only after seeing three near-identical errors mid-flow.
-    cluster_check = check_atlas_cluster_exists({
-        "ATLAS_PUBLIC_KEY":   atlas_public_key,
-        "ATLAS_PRIVATE_KEY":  atlas_private_key,
-        "ATLAS_PROJECT_ID":   project_id,
-        "ATLAS_CLUSTER_NAME": cluster_name,
-    })
+    cluster_check = check_atlas_cluster_exists(
+        {
+            "ATLAS_PUBLIC_KEY": atlas_public_key,
+            "ATLAS_PRIVATE_KEY": atlas_private_key,
+            "ATLAS_PROJECT_ID": project_id,
+            "ATLAS_CLUSTER_NAME": cluster_name,
+        }
+    )
     if cluster_check.status == "fail":
         print(f"\n  ✗ Atlas cluster preflight failed: {cluster_check.message}")
         if getattr(cluster_check, "remediation", None):
@@ -2196,9 +2555,29 @@ def run_asp_setup(
             )
 
         # Step 3: Seed data (before indexes, so collections exist)
-        if not skip_seed and mongodb_connection_string and mongodb_username and mongodb_password:
-            seed_events_calendar(mongodb_connection_string, mongodb_username, mongodb_password)
-            seed_vessel_catalog(mongodb_connection_string, mongodb_username, mongodb_password)
+        have_mongo_creds = bool(
+            mongodb_connection_string and mongodb_username and mongodb_password
+        )
+        if not skip_seed and have_mongo_creds:
+            seed_events_calendar(
+                mongodb_connection_string, mongodb_username, mongodb_password
+            )
+            seed_vessel_catalog(
+                mongodb_connection_string, mongodb_username, mongodb_password
+            )
+            # Populate the RAG knowledge base by embedding the seeded events in
+            # Python (replaces the broken ASP $https Voyage processor).
+            if not populate_knowledge_base(
+                mongodb_connection_string,
+                mongodb_username,
+                mongodb_password,
+                voyage_api_key,
+                voyage_api_endpoint=voyage_api_endpoint,
+            ):
+                print(
+                    "  [warn] knowledge_base not populated — RAG enrichment "
+                    "will be empty (traffic/anomaly pipeline still works)."
+                )
         elif not skip_seed:
             print(f"\n{'='*60}")
             print("Step 3: Seed data")
@@ -2219,23 +2598,12 @@ def run_asp_setup(
         if not skip_processors:
             processors_created = ensure_processors(api)
 
-        # Step 6: Re-seed calendar to trigger change stream — ONLY when a
-        # processor was newly created on this run. Re-seeding on every
-        # asp-setup invocation mutates events.calendar.updated_at and
-        # fires the change-stream re-embedding via Voyage AI for no
-        # functional gain.
-        if (processors_created
-                and not skip_seed
-                and not skip_processors
-                and mongodb_connection_string
-                and mongodb_username
-                and mongodb_password):
-            print(f"\n{'='*60}")
-            print("Step 6: Re-seed calendar (trigger change stream)")
-            print(f"{'='*60}")
-            print("  (processors were newly created — waking the change stream)")
-            time.sleep(5)
-            seed_events_calendar(mongodb_connection_string, mongodb_username, mongodb_password)
+        # (Removed) Step 6 previously re-seeded events.calendar to wake the
+        # event_knowledge_base_population change-stream processor. That
+        # processor is gone (its Voyage $https call failed); the knowledge
+        # base is now populated directly in Step 3 via
+        # populate_knowledge_base(), so there is no change stream to wake.
+        _ = processors_created  # retained for signature/return compatibility
 
         print(f"\n{'='*60}")
         print("  ✓ ASP setup complete!")
@@ -2274,11 +2642,15 @@ def run_asp_teardown(
         instance_exists = any(i.get("name") == ASP_INSTANCE_NAME for i in instances)
 
         if not instance_exists:
-            print(f"  ⊘ ASP instance '{ASP_INSTANCE_NAME}' not found — nothing to tear down")
+            print(
+                f"  ⊘ ASP instance '{ASP_INSTANCE_NAME}' not found — nothing to tear down"
+            )
             return True
 
         # Stop all processors
-        resp = api.get(f"/streams/{ASP_INSTANCE_NAME}/processors", api_version=proc_api_ver)
+        resp = api.get(
+            f"/streams/{ASP_INSTANCE_NAME}/processors", api_version=proc_api_ver
+        )
         if resp.ok:
             processors = resp.json().get("results", [])
             for proc in processors:
@@ -2315,7 +2687,9 @@ def run_asp_teardown(
         if del_resp.ok or del_resp.status_code == 404:
             print(f"  ✓ Deleted instance '{ASP_INSTANCE_NAME}'")
         else:
-            print(f"  ⚠ Could not delete instance: {del_resp.status_code} {del_resp.text}")
+            print(
+                f"  ⚠ Could not delete instance: {del_resp.status_code} {del_resp.text}"
+            )
 
         print(f"\n{'='*60}")
         print("  ✓ ASP teardown complete!")
@@ -2336,6 +2710,7 @@ def _load_env_defaults() -> dict:
         if env_file.exists():
             try:
                 from dotenv import dotenv_values
+
                 return {k: v for k, v in dotenv_values(env_file).items() if v}
             except ImportError:
                 return {}
@@ -2404,7 +2779,7 @@ def main() -> None:
         "--voyage-api-endpoint",
         default=env.get("TF_VAR_voyage_api_endpoint", VOYAGE_API_ENDPOINT_DEFAULT),
         help="Voyage AI embeddings endpoint URL "
-             f"(default: {VOYAGE_API_ENDPOINT_DEFAULT})",
+        f"(default: {VOYAGE_API_ENDPOINT_DEFAULT})",
     )
     parser.add_argument(
         "--schema-registry-url",
@@ -2437,15 +2812,18 @@ def main() -> None:
         help="MongoDB password for seeding",
     )
     parser.add_argument(
-        "--skip-seed", action="store_true",
+        "--skip-seed",
+        action="store_true",
         help="Skip seeding events.calendar",
     )
     parser.add_argument(
-        "--skip-processors", action="store_true",
+        "--skip-processors",
+        action="store_true",
         help="Skip creating/starting processors (connections only)",
     )
     parser.add_argument(
-        "--seed-only", action="store_true",
+        "--seed-only",
+        action="store_true",
         help="Only seed events.calendar (skip ASP provisioning entirely)",
     )
 
@@ -2457,11 +2835,26 @@ def main() -> None:
         mongo_user = args.mongodb_username
         mongo_pass = args.mongodb_password
         if not (mongo_conn and mongo_user and mongo_pass):
-            print("Error: --seed-only requires --mongodb-connection-string, --mongodb-username, --mongodb-password")
+            print(
+                "Error: --seed-only requires --mongodb-connection-string, --mongodb-username, --mongodb-password"
+            )
             print("Set them via CLI flags or in .env")
             sys.exit(1)
         seed_events_calendar(mongo_conn, mongo_user, mongo_pass)
         seed_vessel_catalog(mongo_conn, mongo_user, mongo_pass)
+        # Also (re)populate the RAG knowledge base so the dashboard's "Seed
+        # Events" button (uv run asp-setup --seed-only) produces embeddings,
+        # not just calendar rows. Best-effort: a Voyage failure warns, not aborts.
+        if args.voyage_api_key and not populate_knowledge_base(
+            mongo_conn,
+            mongo_user,
+            mongo_pass,
+            args.voyage_api_key,
+            voyage_api_endpoint=args.voyage_api_endpoint,
+        ):
+            print(
+                "  [warn] knowledge_base not populated — RAG enrichment will be empty."
+            )
         sys.exit(0)
 
     # Validate required arguments
@@ -2476,7 +2869,9 @@ def main() -> None:
     }
     missing = [k for k, v in required.items() if not v]
     if missing:
-        print(f"Error: Missing required arguments: {', '.join(f'--{m}' for m in missing)}")
+        print(
+            f"Error: Missing required arguments: {', '.join(f'--{m}' for m in missing)}"
+        )
         print("Set them via CLI flags or in .env")
         sys.exit(1)
 
@@ -2516,12 +2911,17 @@ def main() -> None:
             try:
                 from scripts.common.terraform import get_project_root
                 from scripts.common.terraform_outputs import get_core_outputs
+
                 _outputs = get_core_outputs(get_project_root(strict=False))
                 if _outputs:
                     if not kafka_rest_endpoint:
-                        kafka_rest_endpoint = _outputs.get("confluent_kafka_cluster_rest_endpoint", {}).get("value", "")
+                        kafka_rest_endpoint = _outputs.get(
+                            "confluent_kafka_cluster_rest_endpoint", {}
+                        ).get("value", "")
                     if not kafka_cluster_id:
-                        kafka_cluster_id = _outputs.get("confluent_kafka_cluster_id", {}).get("value", "")
+                        kafka_cluster_id = _outputs.get(
+                            "confluent_kafka_cluster_id", {}
+                        ).get("value", "")
             except Exception:
                 pass
 
@@ -2540,12 +2940,28 @@ def main() -> None:
         if mongo_conn and mongo_user and mongo_pass:
             seed_events_calendar(mongo_conn, mongo_user, mongo_pass)
             seed_vessel_catalog(mongo_conn, mongo_user, mongo_pass)
+            # Populate the RAG knowledge base by embedding the seeded events in
+            # Python (replaces the broken ASP $https Voyage processor). Mirrors
+            # run_asp_setup so the CLI path and the deploy path stay in sync.
+            if not populate_knowledge_base(
+                mongo_conn,
+                mongo_user,
+                mongo_pass,
+                args.voyage_api_key,
+                voyage_api_endpoint=args.voyage_api_endpoint,
+            ):
+                print(
+                    "  [warn] knowledge_base not populated — RAG enrichment "
+                    "will be empty (traffic/anomaly pipeline still works)."
+                )
         else:
             print(f"\n{'='*60}")
             print("Step 3: Seed data")
             print(f"{'='*60}")
             print("  ⊘ Skipping — no MongoDB credentials provided")
-            print("    Use --mongodb-connection-string, --mongodb-username, --mongodb-password")
+            print(
+                "    Use --mongodb-connection-string, --mongodb-username, --mongodb-password"
+            )
     else:
         print("\n  ⊘ Skipping seed data (--skip-seed)")
 

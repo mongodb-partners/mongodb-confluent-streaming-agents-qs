@@ -9,6 +9,7 @@ wait. Pass --include-cluster to also tear down the cluster.
 """
 
 import argparse
+from scripts.common.http_auth import basic_auth_token
 import os
 import shutil
 import sys
@@ -53,7 +54,6 @@ def _delete_flink_dml_statements(root: Path) -> None:
     import json
     import urllib.request
     import urllib.error
-    import base64
 
     from scripts.common.flink_statements import ALL_DELETABLE_STATEMENTS
 
@@ -90,7 +90,7 @@ def _delete_flink_dml_statements(root: Path) -> None:
         database="",  # not used by delete_and_wait
     )
 
-    cred_bytes = base64.b64encode(f"{flink_key}:{flink_secret}".encode()).decode()
+    cred_bytes = basic_auth_token(flink_key, flink_secret)
     headers = {
         "Authorization": f"Basic {cred_bytes}",
     }
@@ -125,18 +125,10 @@ def _delete_kafka_topics(root: Path) -> None:
     """
     import urllib.request
     import urllib.error
-    import base64
 
-    TOPICS = [
-        "ride_requests",
-        "windowed_traffic",
-        "anomalies_per_zone",
-        "anomalies_enriched",
-        "zone_traffic_sink",
-        "anomalies_sink",
-        "event_documents",
-        "completed_actions",
-    ]
+    # canonical source: every pipeline topic across all groups (full teardown).
+    from scripts.common.pipeline_topics import ALL_PIPELINE_TOPICS
+    TOPICS = list(ALL_PIPELINE_TOPICS)
 
     # cached terraform output helper.
     from scripts.common.terraform_outputs import get_core_outputs
@@ -153,7 +145,7 @@ def _delete_kafka_topics(root: Path) -> None:
         print("  [warn] Missing Kafka REST credentials — skipping topic cleanup")
         return
 
-    cred = base64.b64encode(f"{kafka_api_key}:{kafka_api_secret}".encode()).decode()
+    cred = basic_auth_token(kafka_api_key, kafka_api_secret)
     headers = {
         "Authorization": f"Basic {cred}",
     }
@@ -250,16 +242,9 @@ def _clear_mongodb_collections(creds: dict) -> None:
         print(f"  Warning: Could not connect to MongoDB: {e}")
         return
 
-    collections = [
-        ("analytics", "zone_traffic"),
-        ("analytics", "zone_anomalies"),
-        ("fleet", "dispatch_log"),
-        ("fleet", "vessel_catalog"),
-        ("fleet", "validation_dlq"),
-        ("events", "knowledge_base"),
-        ("events", "calendar"),
-        ("events", "validation_dlq"),
-    ]
+    # canonical source: all pipeline collections (full teardown).
+    from scripts.common.pipeline_topics import ALL_MONGODB_COLLECTIONS
+    collections = [tuple(c) for c in ALL_MONGODB_COLLECTIONS]
     try:
         for db_name, coll_name in collections:
             result = client[db_name][coll_name].delete_many({})

@@ -22,7 +22,7 @@ No human approves these decisions. No hardcoded rules determine allocation. The 
 ## Pipeline Architecture
 
 ```
-ride_requests → [5-min window aggregation] → [ML_DETECT_ANOMALIES]
+ride_requests → [1-min window aggregation] → [ML_DETECT_ANOMALIES]
                                                       |
                                               anomalies_per_zone
                                                  /           \
@@ -85,9 +85,37 @@ The deploy wizard prompts for all credentials and handles the complete setup:
 - Deploys 14+ Flink SQL DDL resources via Terraform
 - Creates 7 Flink streaming statements via REST API (2 DDL + 5 DML)
 - Sets up Atlas Stream Processing with 5 processors
-- Seeds the event knowledge base with 10 events across all zones
+- Seeds the event knowledge base with 10 events across all zones (embeddings computed at seed time via Voyage AI)
 - Publishes initial ride data to bootstrap the pipeline
-- Launches the Streamlit dashboard on port 8501
+- Launches Mission Control (the UI) on port 8502
+
+### Mission Control (the UI)
+
+`uv run live` serves **Mission Control** at http://localhost:8502 — a real-time
+HUD driven entirely by MongoDB Atlas change streams: an animated dispatch map
+(boats follow the real Mississippi centerline), a sense→reason→act pipeline rail
+that pulses as events land, the surge queue with per-zone traffic charts and the
+event knowledge base, the agent's reasoning with its Atlas Vector Search
+context, and stage banners when a surge is detected and the agent dispatches.
+A built-in guided tour (the `? Tour` button) walks first-time viewers through
+every panel. Trigger the whole loop on cue with `uv run surge`.
+
+### Verify your deployment
+
+Two commands prove the whole pipeline is up:
+
+```bash
+uv run health    # one-shot report: Flink statements, ASP processors, Kafka topics, Atlas collections
+uv run surge     # trigger a demand surge and watch Mission Control react end to end
+```
+
+A healthy deployment shows `Overall: HEALTHY` from `uv run health`, and within
+about two minutes of `uv run surge` Mission Control (http://localhost:8502)
+displays the full loop: SURGE DETECTED banner → agent reasoning with Vector
+Search evidence → AGENT DISPATCHING → boats moving on the map. A screenshot of
+that screen, or your `uv run health` output, is your proof of a working
+deployment. If anything reports unhealthy, see
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ### Generate continuous data (optional)
 
@@ -111,7 +139,8 @@ uv run datagen --local
 | `uv run asp-setup` | Provision ASP resources (standalone) |
 | `uv run mcp-deploy` | Deploy MCP server to ECS Express |
 | `uv run mcp-deploy --destroy` | Tear down MCP server |
-| `uv run dashboard` | Launch Streamlit real-time dashboard |
+| `uv run live` | Launch Mission Control — the UI (HUD + SSE, port 8502) |
+| `uv run surge` | Trigger a deterministic, window-aligned demand surge |
 | `uv run publish_data --data-file <path> --force` | Publish ride data to Kafka |
 | `uv run health` | Single-command pipeline health report (Flink + ASP + Kafka + Atlas) |
 | `uv run preflight` | Phase-aware connectivity probes (`--phase X`, `--json`) |
@@ -149,7 +178,8 @@ scripts/
   destroy.py             Resource teardown
   mcp_deploy.py          MCP server ECS Express deployment
   asp_setup.py           Atlas Stream Processing provisioning
-  dashboard.py           Streamlit real-time dashboard
+  live_server.py         Mission Control server (SSE + static HUD + bootstrap)
+  dashboard.py           Legacy Streamlit dashboard (decommissioned; manual use only)
   datagen.py             ShadowTraffic data generation
   pipeline_reset.py      Pipeline reset (cleanup + restart)
   publish_data.py        Kafka data publisher
@@ -162,7 +192,7 @@ mcp-server/
   Dockerfile             MCP server image (Node.js + proxy)
   proxy.mjs              Flink compatibility proxy
 assets/data/             Pre-generated ride data (10 batches with escalating surges)
-testing/e2e/             560+ structural/offline tests across 18 files
+testing/e2e/             890+ structural/offline tests across 35 files
 docs/
   ARCHITECTURE.md        System design and data flow explanation
   CONFIGURATION.md       Environment variable reference

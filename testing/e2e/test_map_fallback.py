@@ -4,7 +4,6 @@ REQ-E-200..203 + INV-201 from specs/2026-05-15-stability-fixes/.
 """
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # TC-MAP-001 + TC-MAP-002 — REQ-E-200: synthesize fallback trips
 # ---------------------------------------------------------------------------
@@ -12,7 +11,7 @@ from __future__ import annotations
 def test_TC_MAP_001_fallback_when_dispatch_json_is_string_none():
     """When dispatch_json is the literal string 'None', _build_dispatch_trips
     falls back to vessel_catalog-derived trips."""
-    from scripts.dashboard import _build_dispatch_trips, ZONE_COORDS
+    from scripts.dashboard import ZONE_COORDS, _build_dispatch_trips
 
     assert "Bywater" in ZONE_COORDS  # surge target
     assert "Uptown" in ZONE_COORDS   # vessel home
@@ -169,7 +168,9 @@ def test_TC_MAP_009_trips_use_river_dock_coords_not_zone_centers():
     waypoints between them. ZONE_DOCK_COORDS still anchors the
     endpoints; ZONE_COORDS only drives city-center label placement."""
     from scripts.dashboard import (
-        _build_dispatch_trips, ZONE_COORDS, ZONE_DOCK_COORDS,
+        ZONE_COORDS,
+        ZONE_DOCK_COORDS,
+        _build_dispatch_trips,
     )
     dispatches = [{"pickup_zone": "Bywater", "dispatch_json": "None"}]
     vessel_home = {"VESSEL-1": "Uptown"}

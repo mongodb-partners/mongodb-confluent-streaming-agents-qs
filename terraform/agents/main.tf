@@ -83,6 +83,13 @@ resource "confluent_flink_statement" "mongodb_connection_statement" {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Enhanced Vector DB Table (events.knowledge_base, 1024-dim)
+#
+# NOTE: mongodb.numCandidates is 20 (was 500). For a ~10-document knowledge base
+# 500 made each VECTOR_SEARCH_AGG expensive enough that anomalies-enriched-insert
+# blew its search retry budget ("Search table request timed out: Max retries
+# exceeded"). 20 is ample for a KB this small. Raise it if the KB grows large.
+# (Keep this note OUT of the SQL heredoc below — Flink SQL comments are `--`,
+# not `#`, and a `#` inside the statement fails parsing.)
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "confluent_flink_statement" "documents_vectordb" {
@@ -126,7 +133,7 @@ resource "confluent_flink_statement" "documents_vectordb" {
       'mongodb.collection' = 'knowledge_base',
       'mongodb.index' = 'vector_index',
       'mongodb.embedding_column' = 'embedding',
-      'mongodb.numCandidates' = '500'
+      'mongodb.numCandidates' = '20'
     );
   EOT
 
@@ -493,7 +500,7 @@ resource "confluent_flink_statement" "windowed_traffic_view" {
         TUMBLE(
             TABLE `${data.terraform_remote_state.core.outputs.confluent_environment_display_name}`.`${data.terraform_remote_state.core.outputs.confluent_kafka_cluster_display_name}`.`ride_requests`,
             DESCRIPTOR(request_ts),
-            INTERVAL '5' MINUTE
+            INTERVAL '1' MINUTE
         )
     )
     GROUP BY window_start, window_end, window_time, pickup_zone;

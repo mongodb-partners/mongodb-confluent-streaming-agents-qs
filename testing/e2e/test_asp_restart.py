@@ -4,8 +4,7 @@ REQ-E-210..215, INV-202, INV-205 from specs/2026-05-15-stability-fixes/.
 """
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # TC-ASP-001 — REQ-E-213: KAFKA_SOURCE_PROCESSORS topology mapping
@@ -21,6 +20,7 @@ def test_TC_ASP_001_topology_module_exists():
 def test_TC_ASP_002_topology_includes_pipeline_topics():
     """All known Kafka-source ASP processors are in the map."""
     from scripts.common.asp_topology import KAFKA_SOURCE_PROCESSORS
+
     # Must map zone_traffic_sink → zone_traffic_ingestion
     assert "zone_traffic_sink" in KAFKA_SOURCE_PROCESSORS
     assert "zone_traffic_ingestion" in KAFKA_SOURCE_PROCESSORS["zone_traffic_sink"]
@@ -121,6 +121,7 @@ def test_TC_ASP_006_network_error_does_not_raise():
     """When Atlas API is unreachable, the function logs and returns,
     not aborting the broader deploy/reset flow."""
     import requests
+
     from scripts.common.asp_restart import restart_processors_for_topics
     with patch("scripts.common.asp_restart.requests.post",
                side_effect=requests.exceptions.ConnectionError("boom")), \
@@ -179,6 +180,7 @@ def test_TC_ASP_008_reset_pipeline_calls_restart_helper():
     appears in the source code (structural check matching project's
     existing test pattern in test_integration.py)."""
     import inspect
+
     from scripts import pipeline_reset
     src = inspect.getsource(pipeline_reset.reset_pipeline)
     assert "restart_processors_for_topics" in src, (
@@ -195,6 +197,7 @@ def test_TC_ASP_009_ensure_flink_topics_calls_restart_helper():
     after recreating output topics, so a re-deploy onto a working cluster
     doesn't silently wedge ASP consumer-group offsets."""
     import inspect
+
     from scripts import deploy
     src = inspect.getsource(deploy._create_flink_dml_statements)
     assert "restart_processors_for_topics" in src, (
@@ -274,6 +277,7 @@ def test_TC_ASP_012_stop_timeout_does_not_block_full_window():
     request timeout means a hung stop blocks the whole reset. The send
     timeout should be <= 60s."""
     import inspect
+
     import scripts.common.asp_restart as ar
     src = inspect.getsource(ar._send_action)
     # The default request_timeout must not be 120 anymore
@@ -291,6 +295,7 @@ def test_TC_ASP_013_waits_for_stopped_before_start():
     :start (existing contract — guard against regression while adding
     the lock-retry)."""
     import inspect
+
     import scripts.common.asp_restart as ar
     src = inspect.getsource(ar.restart_processors_for_topics)
     stop_wait = src.find("_TERMINAL_STOPPED")

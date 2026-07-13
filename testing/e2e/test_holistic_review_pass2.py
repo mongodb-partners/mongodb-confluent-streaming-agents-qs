@@ -18,7 +18,6 @@ from unittest import mock
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -35,7 +34,7 @@ def test_TC_CRG_001_vector_index_created_when_collection_does_not_exist():
     """REQ-CRG-001: on a fresh cluster, GET search/indexes returns 404
     (collection doesn't exist yet, no indexes registered). The code must
     treat 404 as "no existing indexes" and proceed to CREATE, not skip."""
-    from scripts.asp_setup import ensure_atlas_indexes, AtlasAPI
+    from scripts.asp_setup import AtlasAPI, ensure_atlas_indexes
 
     # Stub API: GET search/indexes returns 404; POST search/indexes
     # returns 201. Also stub everything else (cluster check, atlas indexes
@@ -164,7 +163,7 @@ def test_TC_CRG_002_ensure_connections_raises_on_delete_failure():
     """REQ-CRG-002: when a connection delete fails (non-404), the function
     must raise rather than continue silently. Otherwise processors run
     against stale credentials."""
-    from scripts.asp_setup import ensure_connections, AtlasAPI
+    from scripts.asp_setup import AtlasAPI, ensure_connections
 
     class FakeResp:
         def __init__(self, status_code, body=None):
@@ -221,8 +220,9 @@ def test_TC_CRG_002_ensure_connections_raises_on_delete_failure():
 
 def test_TC_CRG_013_atlas_api_passes_timeout():
     """REQ-CRG-013: AtlasAPI.get/post/delete must pass a request timeout."""
-    from scripts.asp_setup import AtlasAPI
     import requests
+
+    from scripts.asp_setup import AtlasAPI
 
     api = AtlasAPI(public_key="pk", private_key="sk", project_id="proj")
     captured_kwargs = []
@@ -591,6 +591,7 @@ def test_TC_CRG_004_log_redaction_strips_secrets():
 def test_TC_CRG_004b_log_redaction_handles_missing_file():
     """REQ-CRG-004: best-effort — missing or empty log file is OK."""
     from scripts.common.cli_logging import _redact_log_file
+
     # Nonexistent path must not raise
     _redact_log_file(Path("/tmp/definitely-does-not-exist-cqrhpz.log"))
 
@@ -624,6 +625,19 @@ class TestRedactionEdgeCases:
         from scripts.common.redaction import redact
         out = redact('AWS_SECRET_ACCESS_KEY="AKIA1234FAKE5678SECRET"')
         assert "AKIA1234FAKE5678SECRET" not in out
+
+    def test_json_secret_pairs_are_masked(self):
+        """JSON object form `{"key":"value"}` must be masked. The key's closing
+        quote sits between key word and colon, and the value ends at `}` — both
+        previously defeated the KV regex, leaking secrets in JSON CLI/JSONL output."""
+        from scripts.common.redaction import redact
+
+        out1 = redact('{"api_secret":"abc123def456"}')
+        assert "abc123def456" not in out1
+        out2 = redact('{"ATLAS_PRIVATE_KEY":"xyz789private0"}')
+        assert "xyz789private0" not in out2
+        # Non-secret JSON keys must still pass through untouched.
+        assert redact('{"environment":"env-abc123"}') == '{"environment":"env-abc123"}'
 
     def test_value_under_8_chars_fully_redacted(self):
         """Short values are fully masked (no prefix leakage)."""
@@ -703,8 +717,9 @@ def test_TC_CRG_030_health_includes_mcp_check():
 def test_TC_CRG_031_get_topic_message_count_returns_zero_on_404():
     """REQ-CRG-031: _get_topic_message_count must return 0 for a topic
     that doesn't exist (404 on partitions endpoint)."""
-    from scripts import publish_data
     import urllib.error
+
+    from scripts import publish_data
 
     def fake_urlopen(*args, **kwargs):
         raise urllib.error.HTTPError(
@@ -723,8 +738,9 @@ def test_TC_CRG_031_get_topic_message_count_returns_zero_on_404():
 def test_TC_CRG_031b_get_topic_message_count_returns_none_on_transport_error():
     """REQ-CRG-031: transport errors return None (distinguishes "topic
     has 0 messages" from "couldn't query")."""
-    from scripts import publish_data
     import urllib.error
+
+    from scripts import publish_data
 
     def fake_urlopen(*args, **kwargs):
         raise urllib.error.URLError("network down")
@@ -782,8 +798,9 @@ def test_TC_CRG_031c_get_topic_message_count_sums_partition_offsets():
 
 def test_TC_CRG_031d_publish_data_main_parses_dry_run_flag():
     """REQ-CRG-031: --dry-run argparse flag exists and short-circuits."""
-    from scripts import publish_data
     import argparse
+
+    from scripts import publish_data
 
     # The main module's parser must accept --dry-run.
     src = inspect.getsource(publish_data.main)

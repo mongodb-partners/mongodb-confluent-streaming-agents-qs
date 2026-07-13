@@ -105,7 +105,15 @@ FROM (
                 `{catalog}`.`{database}`.`documents_vectordb`,
                 DESCRIPTOR(embedding),
                 rad.embedding,
-                3
+                3,
+                -- Search invocation options (Confluent Flink search-functions):
+                -- client_timeout is an INTEGER in SECONDS (not a duration string,
+                -- not the `mongodb.client_timeout` the error message suggests —
+                -- that key is unrecognized). retry_count raises the retry ceiling
+                -- (default 3 → the "Max retries (4) exceeded" failure). Without
+                -- these, each per-anomaly federated $vectorSearch against Atlas
+                -- blows the 30s/3-retry default under load and the statement FAILs.
+                MAP['client_timeout', 120, 'retry_count', 6]
             )
         ) AS vs
     ) AS rad_with_rag,

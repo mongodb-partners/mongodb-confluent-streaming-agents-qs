@@ -5,7 +5,7 @@ WITH anomaly_detection AS (
         ML_DETECT_ANOMALIES(
             CAST(request_count AS DOUBLE), window_time,
             JSON_OBJECT(
-                'minTrainingSize' VALUE 50, 'maxTrainingSize' VALUE 7000,
+                'minTrainingSize' VALUE 15, 'maxTrainingSize' VALUE 7000,
                 'confidencePercentage' VALUE 99.999, 'enableStl' VALUE FALSE
             )
         ) OVER (PARTITION BY pickup_zone ORDER BY window_time

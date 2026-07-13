@@ -15,6 +15,7 @@ Traditional Python:
 
 import argparse
 import base64
+from scripts.common.http_auth import basic_auth_token
 import io
 import json
 import logging
@@ -28,17 +29,23 @@ from typing import Any, Dict
 
 try:
     import fastavro
+
     FASTAVRO_AVAILABLE = True
 except ImportError:
     FASTAVRO_AVAILABLE = False
 
 try:
     from confluent_kafka import Producer
+
     CONFLUENT_KAFKA_AVAILABLE = True
 except ImportError:
     CONFLUENT_KAFKA_AVAILABLE = False
 
-from .common.terraform import extract_kafka_credentials, validate_terraform_state, get_project_root
+from .common.terraform import (
+    extract_kafka_credentials,
+    validate_terraform_state,
+    get_project_root,
+)
 from .common.logging_utils import setup_logging
 
 
@@ -52,7 +59,7 @@ def _get_current_schema_id(
 
     Returns the numeric schema ID, or None if the subject doesn't exist.
     """
-    cred = base64.b64encode(f"{sr_api_key}:{sr_api_secret}".encode()).decode()
+    cred = basic_auth_token(sr_api_key, sr_api_secret)
     headers = {"Authorization": f"Basic {cred}"}
     url = f"{sr_endpoint}/subjects/{subject}/versions/latest"
     req = urllib.request.Request(url, headers=headers)
@@ -74,7 +81,7 @@ def _rewrite_avro_schema_id(value_bytes: bytes, new_schema_id: int) -> bytes:
     """
     if len(value_bytes) < 5 or value_bytes[0] != 0:
         return value_bytes  # Not Confluent Avro wire format
-    return b'\x00' + new_schema_id.to_bytes(4, 'big') + value_bytes[5:]
+    return b"\x00" + new_schema_id.to_bytes(4, "big") + value_bytes[5:]
 
 
 _RIDE_REQUESTS_SCHEMA = {
@@ -88,45 +95,62 @@ _RIDE_REQUESTS_SCHEMA = {
         {"name": "drop_off_zone", "type": "string"},
         {"name": "price", "type": "double"},
         {"name": "number_of_passengers", "type": "int"},
-        {"name": "request_ts", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+        {
+            "name": "request_ts",
+            "type": {"type": "long", "logicalType": "timestamp-millis"},
+        },
     ],
 }
 
 
 def _compute_time_offset(jsonl_file: Path) -> int:
-    """Compute the ms offset to shift pre-generated data to start at current UTC time.
+    """Compute the ms offset to shift pre-generated data to END at current UTC time.
 
-    Reads the first record's request_ts and returns the delta (in ms) between
-    now and that timestamp. Adding this delta to every record makes the data
-    appear as if generated right now.
+    Reads the LAST record's request_ts and returns the delta (in ms) between
+    now and that timestamp. Adding this delta to every record makes the batch
+    read as the PAST 24 hours of history, ending right now.
+
+    It must be the last record, not the first: rebasing the batch to START
+    at now pushes 24 hours of event time into the FUTURE, which races the
+    Flink event-time watermark ~24h ahead — every live record published
+    afterwards (`uv run surge`, ShadowTraffic) is then dropped as late and
+    NO anomaly can fire until wall-clock time catches up. Ending at now
+    gives the anomaly model its full training history immediately AND keeps
+    the watermark at the present so live surges detect within one window.
     """
     if not FASTAVRO_AVAILABLE:
         return 0
 
+    last_line = ""
     with open(jsonl_file, "r", encoding="utf-8") as f:
-        first_line = f.readline().strip()
-    if not first_line:
+        for line in f:
+            line = line.strip()
+            if line:
+                last_line = line
+    if not last_line:
         return 0
 
-    record = json.loads(first_line)
+    record = json.loads(last_line)
     value_bytes = base64.b64decode(record.get("value", ""))
     if len(value_bytes) < 6 or value_bytes[0] != 0:
         return 0
 
     payload = io.BytesIO(value_bytes[5:])
     try:
-        parsed = fastavro.schemaless_reader(payload, fastavro.parse_schema(_RIDE_REQUESTS_SCHEMA))
+        parsed = fastavro.schemaless_reader(
+            payload, fastavro.parse_schema(_RIDE_REQUESTS_SCHEMA)
+        )
     except Exception:
         return 0
 
-    first_ts = parsed["request_ts"]
-    if hasattr(first_ts, "timestamp"):
-        first_ts_ms = int(first_ts.timestamp() * 1000)
+    last_ts = parsed["request_ts"]
+    if hasattr(last_ts, "timestamp"):
+        last_ts_ms = int(last_ts.timestamp() * 1000)
     else:
-        first_ts_ms = int(first_ts)
+        last_ts_ms = int(last_ts)
 
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    return now_ms - first_ts_ms
+    return now_ms - last_ts_ms
 
 
 def _rewrite_timestamp(value_bytes: bytes, offset_ms: int, parsed_schema) -> bytes:
@@ -196,7 +220,7 @@ def _get_topic_message_count(
     refuse to publish.
     """
     logger = logging.getLogger(__name__)
-    cred = base64.b64encode(f"{kafka_api_key}:{kafka_api_secret}".encode()).decode()
+    cred = basic_auth_token(kafka_api_key, kafka_api_secret)
     headers = {"Authorization": f"Basic {cred}"}
 
     # List partitions for the topic
@@ -259,7 +283,7 @@ def _ensure_topic_exists(
     Returns True if the topic exists (or was created), False on failure.
     """
     logger = logging.getLogger(__name__)
-    cred = base64.b64encode(f"{kafka_api_key}:{kafka_api_secret}".encode()).decode()
+    cred = basic_auth_token(kafka_api_key, kafka_api_secret)
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Basic {cred}",
@@ -280,10 +304,12 @@ def _ensure_topic_exists(
 
     # Create the topic
     create_url = f"{rest_endpoint}/kafka/v3/clusters/{cluster_id}/topics"
-    body = json.dumps({
-        "topic_name": topic,
-        "partitions_count": num_partitions,
-    }).encode()
+    body = json.dumps(
+        {
+            "topic_name": topic,
+            "partitions_count": num_partitions,
+        }
+    ).encode()
     req = urllib.request.Request(create_url, data=body, method="POST", headers=headers)
     try:
         urllib.request.urlopen(req, timeout=30)
@@ -331,20 +357,35 @@ class DataPublisher:
 
         # Create Kafka producer config
         self.producer_config = {
-            'bootstrap.servers': bootstrap_servers,
-            'sasl.mechanisms': 'PLAIN',
-            'security.protocol': 'SASL_SSL',
-            'sasl.username': kafka_api_key,
-            'sasl.password': kafka_api_secret,
-            'linger.ms': 10,
-            'batch.size': 16384,
-            'compression.type': 'snappy',
+            "bootstrap.servers": bootstrap_servers,
+            "sasl.mechanisms": "PLAIN",
+            "security.protocol": "SASL_SSL",
+            "sasl.username": kafka_api_key,
+            "sasl.password": kafka_api_secret,
+            "linger.ms": 10,
+            "batch.size": 16384,
+            "compression.type": "snappy",
         }
+
+        # Delivery accounting: produce() only ENQUEUES; the broker reports
+        # delivery (or failure: auth, unknown topic, quota) asynchronously via
+        # this callback. We must count real delivery failures, not enqueue
+        # success, or an auth/topic error would still report a clean run.
+        self._delivery_failures = 0
+        self._delivered = 0
 
         # Initialize producer (if not dry run)
         self.producer = None
         if not dry_run:
             self.producer = Producer(self.producer_config)
+
+    def _on_delivery(self, err, msg):
+        """confluent-kafka delivery report callback (runs during poll/flush)."""
+        if err is not None:
+            self._delivery_failures += 1
+            self.logger.error(f"Delivery failed: {err}")
+        else:
+            self._delivered += 1
 
     def publish_message(self, record: Dict[str, Any], topic: str) -> bool:
         """
@@ -359,32 +400,44 @@ class DataPublisher:
         """
         try:
             # Decode base64 key and value back to bytes
-            key_bytes = base64.b64decode(record['key']) if record.get('key') else None
-            value_bytes = base64.b64decode(record['value']) if record.get('value') else None
+            key_bytes = base64.b64decode(record["key"]) if record.get("key") else None
+            value_bytes = (
+                base64.b64decode(record["value"]) if record.get("value") else None
+            )
 
             # Rewrite the embedded Avro schema ID to match the current registry
             if value_bytes and self.target_schema_id is not None:
-                value_bytes = _rewrite_avro_schema_id(value_bytes, self.target_schema_id)
+                value_bytes = _rewrite_avro_schema_id(
+                    value_bytes, self.target_schema_id
+                )
 
             # Shift timestamps to current time
             if value_bytes and self.time_offset_ms and self._parsed_schema:
-                value_bytes = _rewrite_timestamp(value_bytes, self.time_offset_ms, self._parsed_schema)
+                value_bytes = _rewrite_timestamp(
+                    value_bytes, self.time_offset_ms, self._parsed_schema
+                )
 
             # Decode headers if present
             headers_list = None
-            if record.get('headers'):
-                headers_list = [(k, base64.b64decode(v)) for k, v in record['headers'].items()]
+            if record.get("headers"):
+                headers_list = [
+                    (k, base64.b64decode(v)) for k, v in record["headers"].items()
+                ]
 
             if self.dry_run:
-                self.logger.debug(f"[DRY RUN] Would publish message to partition {record.get('partition')}, offset {record.get('offset')}")
+                self.logger.debug(
+                    f"[DRY RUN] Would publish message to partition {record.get('partition')}, offset {record.get('offset')}"
+                )
                 return True
 
-            # Produce message
+            # Produce message. on_delivery fires later (during poll/flush) with
+            # the broker's verdict — that is where real failures are counted.
             self.producer.produce(
                 topic,
                 key=key_bytes,
                 value=value_bytes,
-                headers=headers_list
+                headers=headers_list,
+                on_delivery=self._on_delivery,
             )
 
             return True
@@ -408,7 +461,7 @@ class DataPublisher:
 
         # Read all lines
         try:
-            with open(jsonl_file, 'r', encoding='utf-8') as f:
+            with open(jsonl_file, "r", encoding="utf-8") as f:
                 lines = [line.strip() for line in f if line.strip()]
         except Exception as e:
             self.logger.error(f"Failed to read JSONL file {jsonl_file}: {e}")
@@ -432,7 +485,9 @@ class DataPublisher:
 
                 if not self.dry_run and idx % 1000 == 0:
                     self.producer.flush()
-                    self.logger.info(f"Progress: {idx}/{results['total']} messages ({results['success']} succeeded, {results['failed']} failed)")
+                    self.logger.info(
+                        f"Progress: {idx}/{results['total']} messages ({results['success']} succeeded, {results['failed']} failed)"
+                    )
 
             except json.JSONDecodeError as e:
                 self.logger.error(f"Error parsing line {idx}: {e}")
@@ -441,10 +496,29 @@ class DataPublisher:
                 self.logger.error(f"Error processing line {idx}: {e}")
                 results["failed"] += 1
 
-        # Final flush
+        # Final flush — blocks until all enqueued messages have a delivery
+        # report, so _delivery_failures is complete afterward.
         if not self.dry_run and self.producer:
             self.logger.info("Flushing remaining messages...")
-            self.producer.flush()
+            remaining = self.producer.flush(timeout=30)
+            if remaining:
+                # flush() returns the number of messages STILL in the queue —
+                # non-zero means they were never delivered (timeout).
+                self.logger.error(
+                    f"{remaining} message(s) not delivered before flush timeout"
+                )
+                self._delivery_failures += remaining
+
+        # Reconcile async delivery failures: an enqueue counted as "success"
+        # above may have failed at the broker (auth/unknown-topic/quota). Move
+        # those into the failed tally so the caller (and exit code) sees them.
+        if self._delivery_failures:
+            moved = min(self._delivery_failures, results["success"])
+            results["success"] -= moved
+            results["failed"] += moved
+            self.logger.error(
+                f"{self._delivery_failures} message(s) failed broker delivery"
+            )
 
         return results
 
@@ -463,35 +537,29 @@ def main():
 Examples:
   %(prog)s --data-file assets/data/ride_requests.jsonl
   %(prog)s --data-file assets/data/ride_requests.jsonl --dry-run
-        """
+        """,
     )
 
     parser.add_argument(
         "--data-file",
         type=Path,
         required=True,
-        help="Path to JSONL data file with ride requests"
+        help="Path to JSONL data file with ride requests",
     )
     parser.add_argument(
         "--topic",
         default="ride_requests",
-        help="Kafka topic name (default: ride_requests)"
+        help="Kafka topic name (default: ride_requests)",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Test without actually publishing"
+        "--dry-run", action="store_true", help="Test without actually publishing"
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force publish even if the topic already contains messages"
+        help="Force publish even if the topic already contains messages",
     )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
@@ -505,7 +573,9 @@ Examples:
 
     # Check confluent-kafka library is available
     if not CONFLUENT_KAFKA_AVAILABLE:
-        logger.error("confluent-kafka library not available. Please install it with: uv pip install confluent-kafka")
+        logger.error(
+            "confluent-kafka library not available. Please install it with: uv pip install confluent-kafka"
+        )
         return 1
 
     logger.info(f"Publishing ride request data from {args.data_file}")
@@ -550,7 +620,9 @@ Examples:
                     "relying on broker auto-create on first produce."
                 )
         else:
-            logger.warning("Could not determine Kafka REST endpoint — topic will be auto-created")
+            logger.warning(
+                "Could not determine Kafka REST endpoint — topic will be auto-created"
+            )
 
     # Check if topic already has messages (duplicate data guard)
     if not args.dry_run and not args.force:
@@ -573,9 +645,7 @@ Examples:
                     f"(Kafka REST API partial failure). Refusing to publish "
                     f"to avoid silent duplicates."
                 )
-                print(
-                    f"\n  Could not determine message count for '{args.topic}'."
-                )
+                print(f"\n  Could not determine message count for '{args.topic}'.")
                 print(
                     "  Use --force to publish anyway (may create duplicates) "
                     "or check Kafka REST connectivity."
@@ -599,21 +669,29 @@ Examples:
         sr_secret = credentials.get("schema_registry_api_secret")
         if sr_endpoint and sr_key and sr_secret:
             subject = f"{args.topic}-value"
-            target_schema_id = _get_current_schema_id(sr_endpoint, sr_key, sr_secret, subject)
+            target_schema_id = _get_current_schema_id(
+                sr_endpoint, sr_key, sr_secret, subject
+            )
             # Use `is not None` (not truthiness): a valid schema ID of 0 would
             # be wrongly discarded by a bare `if target_schema_id:`, which is
             # inconsistent with DataPublisher's downstream `is not None` guard.
             if target_schema_id is not None:
                 logger.info(f"Current schema ID for '{subject}': {target_schema_id}")
             else:
-                logger.warning(f"Could not look up schema ID for '{subject}' — publishing with original IDs")
+                logger.warning(
+                    f"Could not look up schema ID for '{subject}' — publishing with original IDs"
+                )
 
     # Compute time offset to shift historical timestamps to current time
     time_offset_ms = _compute_time_offset(args.data_file)
     if time_offset_ms:
         from datetime import timedelta
+
         delta = timedelta(milliseconds=time_offset_ms)
-        logger.info(f"Shifting timestamps forward by {delta} to align with current UTC time")
+        logger.info(
+            f"Shifting timestamps by {delta} so the batch ENDS at current "
+            "UTC time (history behind the watermark, live surges detectable)"
+        )
 
     # Initialize publisher
     try:
@@ -648,7 +726,7 @@ Examples:
         if args.dry_run:
             print("\n[DRY RUN COMPLETE - No messages were actually published]")
 
-        return 0 if results['failed'] == 0 else 1
+        return 0 if results["failed"] == 0 else 1
     finally:
         publisher.close()
 

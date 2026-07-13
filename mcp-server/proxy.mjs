@@ -29,9 +29,37 @@ import { createServer, request as httpRequest } from 'node:http';
 const DEFAULT_TARGET_PORT = 8000;
 const DEFAULT_LISTEN_PORT = 8080;
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Cap the buffered request body so a large (or malicious) payload can't be
+// held fully in memory before upstream auth even runs. MCP JSON-RPC requests
+// are small; 4 MiB is generous. Override with MCP_PROXY_MAX_BODY_BYTES.
+const DEFAULT_MAX_BODY_BYTES = Number(
+  process.env.MCP_PROXY_MAX_BODY_BYTES || 4 * 1024 * 1024,
+);
 
 // Content-Type allow-list. Anything else is rewritten to application/json.
 const CT_ALLOW = ['application/json', 'text/event-stream'];
+
+// Hop-by-hop headers (RFC 7230 §6.1) are connection-specific and MUST NOT be
+// forwarded by a proxy. Forwarding e.g. `transfer-encoding` alongside our own
+// `content-length` produces a framing conflict / request-smuggling surface.
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function stripHopByHop(headers) {
+  const out = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!HOP_BY_HOP_HEADERS.has(k.toLowerCase())) out[k] = v;
+  }
+  return out;
+}
 
 function shouldRewriteContentType(ct) {
   if (!ct) return true;  // missing → force JSON
@@ -52,20 +80,43 @@ function jsonError(statusCode, message, requestId = null) {
   });
 }
 
-function handleRequest(req, res, { targetPort, timeoutMs }) {
-  // Strip / normalise client headers; inject MCP-SDK-required Accept.
-  const headers = { ...req.headers };
+function handleRequest(req, res, { targetPort, timeoutMs, maxBodyBytes }) {
+  // Strip hop-by-hop + host, then inject MCP-SDK-required Accept.
+  const headers = stripHopByHop(req.headers);
   const originalAccept = headers['accept'];
   headers['accept'] = 'application/json, text/event-stream';
   delete headers['host'];
 
   console.error(`[proxy] ${req.method} ${req.url} accept=${originalAccept || '(none)'}`);
 
-  let reqBody = '';
+  // Buffer as Buffers (not string concat, which corrupts multi-byte UTF-8 and
+  // binary), enforcing the size cap as chunks arrive.
+  const chunks = [];
+  let received = 0;
+  let overflowed = false;
   let parsedRequestId = null;
-  req.on('data', (chunk) => { reqBody += chunk; });
+  req.on('data', (chunk) => {
+    if (overflowed) return;
+    received += chunk.length;
+    if (received > maxBodyBytes) {
+      overflowed = true;
+      const body = jsonError(413, `Request body exceeds ${maxBodyBytes} bytes`, null);
+      if (!res.headersSent) {
+        res.writeHead(413, {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body),
+        });
+      }
+      res.end(body);
+      req.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
   req.on('end', () => {
-    if (reqBody) {
+    if (overflowed) return;  // 413 already sent
+    const reqBody = Buffer.concat(chunks);
+    if (reqBody.length) {
       try {
         const parsed = JSON.parse(reqBody);
         parsedRequestId = parsed.id ?? null;
@@ -81,10 +132,12 @@ function handleRequest(req, res, { targetPort, timeoutMs }) {
         port: targetPort,
         path: req.url,
         method: req.method,
-        headers: { ...headers, 'content-length': Buffer.byteLength(reqBody) },
+        headers: { ...headers, 'content-length': reqBody.length },
       },
       (proxyRes) => {
-        const responseHeaders = { ...proxyRes.headers };
+        // Strip hop-by-hop headers from the upstream response too, so we don't
+        // relay connection-specific framing back to the client.
+        const responseHeaders = stripHopByHop(proxyRes.headers);
         const upstreamCt = responseHeaders['content-type'];
 
         // allow-list rewrite.
@@ -131,9 +184,10 @@ export function startProxy({
   targetPort = DEFAULT_TARGET_PORT,
   listenPort = DEFAULT_LISTEN_PORT,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
 } = {}) {
   const server = createServer((req, res) =>
-    handleRequest(req, res, { targetPort, timeoutMs }));
+    handleRequest(req, res, { targetPort, timeoutMs, maxBodyBytes }));
 
   return new Promise((resolve) => {
     server.listen(listenPort, '0.0.0.0', () => {

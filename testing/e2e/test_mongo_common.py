@@ -11,7 +11,6 @@ from urllib.parse import quote_plus
 
 import pytest
 
-
 # -- TC-R-106a: build_uri shape tolerance ------------------------------------
 
 class TestBuildUri:
@@ -77,6 +76,7 @@ class TestGetClient:
     def test_get_client_returns_mongoclient(self):
         """get_client returns a pymongo MongoClient (no network call)."""
         from pymongo import MongoClient
+
         from scripts.common.mongo import get_client
         client = get_client(
             "mongodb://localhost:1/?serverSelectionTimeoutMS=10",
@@ -98,6 +98,7 @@ class TestGetClient:
 
     def test_get_client_enables_retry_writes(self):
         from scripts.common.mongo import get_client
+
         # Inspect source — the wire-level behavior is hard to test offline
         source = inspect.getsource(get_client)
         assert "retryWrites" in source, "get_client must enable retryWrites"

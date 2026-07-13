@@ -68,6 +68,21 @@ resource "mongodbatlas_database_user" "app_user" {
   password           = var.atlas_db_password
   auth_database_name = "admin"
 
+  # SECURITY NOTE (demo default): this DB user is granted atlasAdmin for
+  # convenience. The runtime pipeline genuinely needs DDL across multiple
+  # databases — asp_setup creates collections, applies $jsonSchema validators
+  # (collMod), and writes via $merge into fleet/analytics/events — so the
+  # minimum viable role is roughly readWriteAnyDatabase + dbAdminAnyDatabase.
+  # For a hardened deployment, replace the single atlasAdmin role below with
+  # those two scoped roles (verify asp_setup + vector-index creation still
+  # succeed against your cluster before relying on it):
+  #
+  #   roles { role_name = "readWriteAnyDatabase" database_name = "admin" }
+  #   roles { role_name = "dbAdminAnyDatabase"   database_name = "admin" }
+  #
+  # Atlas Search / Vector Search index creation here goes through the Admin API
+  # (PAK / HTTPDigestAuth), NOT this DB user, so index management is unaffected
+  # by scoping the DB user down.
   roles {
     role_name     = "atlasAdmin"
     database_name = "admin"

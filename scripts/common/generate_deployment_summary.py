@@ -163,11 +163,8 @@ def _build_credentials_section(tf_outputs: Dict[str, Any], get_output: callable)
     # DEPLOYED_RESOURCES.md is gitignored but lives on disk in plaintext
     # and is easy to share by accident (e.g. attaching to a support
     # ticket). Mask to {first4}…{last2} so the value is recognizable
-    # but not usable.
-    def _mask(value: str) -> str:
-        if not value or len(value) < 8:
-            return "***"
-        return f"{value[:4]}…{value[-2:]}"
+    # but not usable. Single source of truth: redaction.mask_secret.
+    from scripts.common.redaction import mask_secret as _mask
 
     return f"""## Service Credentials
 

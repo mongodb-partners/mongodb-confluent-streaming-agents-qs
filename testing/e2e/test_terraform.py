@@ -48,7 +48,9 @@ def providers_tf() -> str:
 
 
 # -- Helper -------------------------------------------------------------------
-def extract_resource_block(tf_content: str, resource_type: str, resource_name: str) -> str:
+def extract_resource_block(
+    tf_content: str, resource_type: str, resource_name: str
+) -> str:
     """Extract a full resource block from terraform content by type and name.
 
     Uses brace counting to find the complete block.
@@ -85,7 +87,9 @@ class TestTerraformValidate:
             text=True,
             timeout=120,
         )
-        assert init_result.returncode == 0, f"terraform init failed: {init_result.stderr}"
+        assert (
+            init_result.returncode == 0
+        ), f"terraform init failed: {init_result.stderr}"
 
         result = subprocess.run(
             ["terraform", "validate"],
@@ -104,20 +108,32 @@ class TestFlinkResources:
 
     def test_mongodb_connection_exists(self, main_tf):
         """TC-TF-003: MongoDB connection resource exists with CREATE CONNECTION."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "mongodb_connection_statement")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "mongodb_connection_statement"
+        )
         assert block, "Resource mongodb_connection_statement not found"
         assert "CREATE CONNECTION" in block
         assert "mongodb-connection" in block
 
     def test_documents_vectordb_has_11_columns(self, main_tf):
         """TC-TF-004: documents_vectordb has all 11 columns and correct DB/collection."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "documents_vectordb")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "documents_vectordb"
+        )
         assert block, "Resource documents_vectordb not found"
 
         expected_columns = [
-            "document_id", "chunk", "embedding", "event_name",
-            "event_time_start", "event_time_end", "venue",
-            "expected_attendance", "zone", "event_type", "impact_level",
+            "document_id",
+            "chunk",
+            "embedding",
+            "event_name",
+            "event_time_start",
+            "event_time_end",
+            "venue",
+            "expected_attendance",
+            "zone",
+            "event_type",
+            "impact_level",
         ]
         for col in expected_columns:
             assert col in block, f"Column '{col}' missing from documents_vectordb"
@@ -125,73 +141,137 @@ class TestFlinkResources:
         assert "'mongodb.database' = 'events'" in block
         assert "'mongodb.collection' = 'knowledge_base'" in block
 
+    def test_documents_vectordb_numcandidates_is_small(self, main_tf):
+        """numCandidates must be small (was 500). For a ~10-doc knowledge base,
+        500 made each VECTOR_SEARCH_AGG so expensive that anomalies-enriched-insert
+        blew its search retry budget and FAILED on every real anomaly lookup."""
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "documents_vectordb"
+        )
+        assert "'mongodb.numCandidates' = '20'" in block
+        assert "'mongodb.numCandidates' = '500'" not in block
+
     def test_mcp_model_uses_bedrock(self, main_tf):
         """TC-TF-005: MCP model uses AWS Bedrock provider (Azure removed)."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "mongodb_mcp_model")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "mongodb_mcp_model"
+        )
         assert block, "MCP model resource not found"
         assert "'provider' = 'bedrock'" in block
-        assert "azure" not in block.lower(), "Azure references must be removed from MCP model"
+        assert (
+            "azure" not in block.lower()
+        ), "Azure references must be removed from MCP model"
         # Ensure no per-cloud variants remain
-        assert not extract_resource_block(main_tf, "confluent_flink_statement", "mongodb_mcp_model_azure"), \
-            "mongodb_mcp_model_azure must be removed"
-        assert not extract_resource_block(main_tf, "confluent_flink_statement", "mongodb_mcp_model_aws"), \
-            "mongodb_mcp_model_aws must be removed (use mongodb_mcp_model instead)"
+        assert not extract_resource_block(
+            main_tf, "confluent_flink_statement", "mongodb_mcp_model_azure"
+        ), "mongodb_mcp_model_azure must be removed"
+        assert not extract_resource_block(
+            main_tf, "confluent_flink_statement", "mongodb_mcp_model_aws"
+        ), "mongodb_mcp_model_aws must be removed (use mongodb_mcp_model instead)"
 
     def test_ride_requests_has_watermark(self, main_tf):
         """TC-TF-006: ride_requests table has WATERMARK."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "ride_requests_table")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "ride_requests_table"
+        )
         assert block, "Resource ride_requests_table not found"
         assert "WATERMARK FOR" in block
 
     def test_anomalies_per_zone_columns(self, main_tf):
         """TC-TF-007: anomalies_per_zone has all 9 columns."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "anomalies_per_zone_table")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "anomalies_per_zone_table"
+        )
         assert block, "Resource anomalies_per_zone_table not found"
 
         expected = [
-            "pickup_zone", "window_time", "request_count",
-            "total_passengers", "total_revenue", "expected_requests",
-            "upper_bound", "lower_bound", "is_surge",
+            "pickup_zone",
+            "window_time",
+            "request_count",
+            "total_passengers",
+            "total_revenue",
+            "expected_requests",
+            "upper_bound",
+            "lower_bound",
+            "is_surge",
         ]
         for col in expected:
             assert col in block, f"Column '{col}' missing from anomalies_per_zone"
 
     def test_anomalies_sink_is_plain_kafka_table(self, main_tf):
         """TC-SINK-001: anomalies_sink is a plain Kafka table (no external connector)."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "anomalies_sink_table")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "anomalies_sink_table"
+        )
         assert block, "Resource anomalies_sink_table not found"
-        assert "'connector' = 'mongodb'" not in block, \
-            "anomalies_sink must be a plain Kafka table (external connector INSERT not supported)"
+        assert (
+            "'connector' = 'mongodb'" not in block
+        ), "anomalies_sink must be a plain Kafka table (external connector INSERT not supported)"
 
     def test_anomalies_sink_columns(self, main_tf):
         """TC-SINK-002: anomalies_sink has correct columns per spec."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "anomalies_sink_table")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "anomalies_sink_table"
+        )
         assert block, "Resource anomalies_sink_table not found"
-        for col in ["pickup_zone", "window_time", "request_count", "expected_requests",
-                     "anomaly_reason", "top_chunk_1", "top_chunk_2", "top_chunk_3", "detected_at"]:
+        for col in [
+            "pickup_zone",
+            "window_time",
+            "request_count",
+            "expected_requests",
+            "anomaly_reason",
+            "top_chunk_1",
+            "top_chunk_2",
+            "top_chunk_3",
+            "detected_at",
+        ]:
             assert col in block, f"Column '{col}' missing from anomalies_sink"
 
     def test_zone_traffic_sink_is_plain_kafka_table(self, main_tf):
         """TC-SINK-003: zone_traffic_sink is a plain Kafka table (no external connector)."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "zone_traffic_sink_table")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "zone_traffic_sink_table"
+        )
         assert block, "Resource zone_traffic_sink_table not found"
-        assert "'connector' = 'mongodb'" not in block, \
-            "zone_traffic_sink must be a plain Kafka table (external connector INSERT not supported)"
+        assert (
+            "'connector' = 'mongodb'" not in block
+        ), "zone_traffic_sink must be a plain Kafka table (external connector INSERT not supported)"
 
     def test_zone_traffic_sink_columns(self, main_tf):
         """TC-SINK-004: zone_traffic_sink has correct columns per spec."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "zone_traffic_sink_table")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "zone_traffic_sink_table"
+        )
         assert block, "Resource zone_traffic_sink_table not found"
-        for col in ["zone", "window_start", "window_end", "request_count",
-                     "total_passengers", "total_revenue"]:
+        for col in [
+            "zone",
+            "window_start",
+            "window_end",
+            "request_count",
+            "total_passengers",
+            "total_revenue",
+        ]:
             assert col in block, f"Column '{col}' missing from zone_traffic_sink"
 
     def test_windowed_traffic_view_tumble(self, main_tf):
-        """TC-TF-010: windowed_traffic view uses 5-minute TUMBLE."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "windowed_traffic_view")
+        """TC-TF-010: windowed_traffic view uses a 1-minute TUMBLE (shortened
+        from 5 min so anomalies surface faster in demos)."""
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "windowed_traffic_view"
+        )
         assert block, "Resource windowed_traffic_view not found"
         assert "TUMBLE" in block
-        assert "INTERVAL '5' MINUTE" in block
+        assert "INTERVAL '1' MINUTE" in block
+        assert "INTERVAL '5' MINUTE" not in block
+
+    def test_anomaly_detection_min_training_size(self):
+        """The anomaly detector's minTrainingSize is lowered to 15 (from 50) so
+        it reaches its baseline and can flag surges far sooner in a demo."""
+        sql_file = AGENTS_TF_DIR / "sql" / "anomaly-detection-insert.sql"
+        assert sql_file.exists(), "anomaly-detection-insert.sql not found"
+        sql = sql_file.read_text()
+        assert "'minTrainingSize' VALUE 15" in sql
+        assert "'minTrainingSize' VALUE 50" not in sql
 
     def test_zone_traffic_sink_insert_sql(self):
         """TC-TF-011a: zone_traffic_sink_insert SQL template exists and is valid."""
@@ -213,30 +293,39 @@ class TestFlinkResources:
 
     def test_mongodb_mcp_connection_exists(self, main_tf):
         """TC-TF-012: mongodb_mcp_connection exists with MCP_SERVER type."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "mongodb_mcp_connection")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "mongodb_mcp_connection"
+        )
         assert block, "Resource mongodb_mcp_connection not found"
         assert "'type' = 'MCP_SERVER'" in block
         assert "mcp_server_url" in block
 
     def test_voyage_connection(self, main_tf):
         """TC-TF-013: voyage_connection uses OpenAI type and a configurable endpoint."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "voyage_connection")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "voyage_connection"
+        )
         assert block, "Resource voyage_connection not found"
         assert "'type' = 'openai'" in block
-        assert "var.voyage_api_endpoint" in block, \
-            "voyage_connection must reference var.voyage_api_endpoint"
+        assert (
+            "var.voyage_api_endpoint" in block
+        ), "voyage_connection must reference var.voyage_api_endpoint"
 
     def test_voyage_endpoint_default(self):
         """TC-TF-013b: voyage_api_endpoint defaults to ai.mongodb.com."""
         variables = (AGENTS_TF_DIR / "variables.tf").read_text()
-        assert "voyage_api_endpoint" in variables, \
-            "agents/variables.tf must define voyage_api_endpoint"
-        assert "https://ai.mongodb.com/v1/embeddings" in variables, \
-            "voyage_api_endpoint should default to ai.mongodb.com"
+        assert (
+            "voyage_api_endpoint" in variables
+        ), "agents/variables.tf must define voyage_api_endpoint"
+        assert (
+            "https://ai.mongodb.com/v1/embeddings" in variables
+        ), "voyage_api_endpoint should default to ai.mongodb.com"
 
     def test_voyage_embedding_model(self, main_tf):
         """TC-TF-014: voyage_query_embedding_model uses voyage-4."""
-        block = extract_resource_block(main_tf, "confluent_flink_statement", "voyage_query_embedding_model")
+        block = extract_resource_block(
+            main_tf, "confluent_flink_statement", "voyage_query_embedding_model"
+        )
         assert block, "Resource voyage_query_embedding_model not found"
         assert "'openai.model_version' = 'voyage-4'" in block
         assert "'openai.connection' = 'voyage_connection'" in block
@@ -251,11 +340,13 @@ class TestFlinkResources:
             "voyage_query_embedding_model": "voyage_connection",
         }
         for resource, dependency in deps.items():
-            block = extract_resource_block(main_tf, "confluent_flink_statement", resource)
-            assert block, f"Resource {resource} not found"
-            assert dependency in block, (
-                f"{resource} should depend on {dependency} but dependency not found in block"
+            block = extract_resource_block(
+                main_tf, "confluent_flink_statement", resource
             )
+            assert block, f"Resource {resource} not found"
+            assert (
+                dependency in block
+            ), f"{resource} should depend on {dependency} but dependency not found in block"
 
     def test_anomalies_enriched_ctas_sql(self):
         """TC-RAG-001: anomalies_enriched DDL SQL template exists (CREATE TABLE only)."""
@@ -294,14 +385,24 @@ class TestFlinkResources:
         assert "llm_textgen_model" in sql
 
     def test_anomalies_sink_insert_sql(self):
-        """TC-RAG-005: anomalies_sink INSERT SQL template exists."""
+        """anomalies_sink INSERT reads DIRECTLY from anomalies_per_zone
+        (detection output), NOT anomalies_enriched. The RAG enrichment path's
+        VECTOR_SEARCH_AGG reliably times out inside Flink under load, so it was
+        taken off the critical path — reading detection output directly
+        guarantees anomalies reach analytics.zone_anomalies."""
         sql_file = AGENTS_TF_DIR / "sql" / "anomalies-sink-insert.sql"
         assert sql_file.exists(), "SQL template anomalies-sink-insert.sql not found"
         sql = sql_file.read_text()
         assert "INSERT INTO" in sql
         assert "anomalies_sink" in sql
-        assert "anomalies_enriched" in sql
         assert "CURRENT_TIMESTAMP" in sql
+        # Critical: source is the detection table, and it filters to surges.
+        assert "anomalies_per_zone" in sql
+        assert "FROM `{catalog}`.`{database}`.`anomalies_enriched`" not in sql, (
+            "sink must NOT depend on anomalies_enriched (RAG vector search "
+            "times out and blocks the whole zone_anomalies path)"
+        )
+        assert "is_surge = true" in sql
 
     def test_all_dml_sql_templates_exist(self):
         """TC-RAG-006: All 7 SQL templates (2 DDL + 5 DML) exist with {catalog}/{database} placeholders."""
@@ -324,8 +425,12 @@ class TestFlinkResources:
 
     def test_no_null_resource_summary_generator(self, main_tf):
         """TC-TF-016: null_resource generate_flink_sql_summary should not exist (removed)."""
-        block = extract_resource_block(main_tf, "null_resource", "generate_flink_sql_summary")
-        assert not block, "null_resource generate_flink_sql_summary should have been removed"
+        block = extract_resource_block(
+            main_tf, "null_resource", "generate_flink_sql_summary"
+        )
+        assert (
+            not block
+        ), "null_resource generate_flink_sql_summary should have been removed"
 
 
 # -- TC-VAR-*: Variables ------------------------------------------------------
@@ -334,20 +439,30 @@ class TestVariables:
 
     def test_mongodb_vars_required_sensitive(self, variables_tf):
         """TC-VAR-001: MongoDB variables are required (no default) and sensitive."""
-        for var_name in ["mongodb_connection_string", "mongodb_username", "mongodb_password"]:
+        for var_name in [
+            "mongodb_connection_string",
+            "mongodb_username",
+            "mongodb_password",
+        ]:
             assert var_name in variables_tf, f"Variable '{var_name}' not found"
             var_start = variables_tf.index(f'variable "{var_name}"')
             next_var = variables_tf.find("\nvariable ", var_start + 1)
-            var_block = variables_tf[var_start:next_var] if next_var > 0 else variables_tf[var_start:]
-            assert "default" not in var_block, \
-                f"Variable '{var_name}' should not have a default (requires user-provided Atlas credentials)"
-            assert "sensitive" in var_block and "true" in var_block, \
-                f"Variable '{var_name}' should be marked sensitive = true"
+            var_block = (
+                variables_tf[var_start:next_var]
+                if next_var > 0
+                else variables_tf[var_start:]
+            )
+            assert (
+                "default" not in var_block
+            ), f"Variable '{var_name}' should not have a default (requires user-provided Atlas credentials)"
+            assert (
+                "sensitive" in var_block and "true" in var_block
+            ), f"Variable '{var_name}' should be marked sensitive = true"
 
     def test_mcp_auth_token_required_sensitive(self, variables_tf):
         """TC-VAR-002: mcp_auth_token is sensitive with no default."""
         assert "mcp_auth_token" in variables_tf
-        mcp_section = variables_tf[variables_tf.index("mcp_auth_token"):]
+        mcp_section = variables_tf[variables_tf.index("mcp_auth_token") :]
         next_var = mcp_section.find("\nvariable ", 1)
         if next_var > 0:
             mcp_section = mcp_section[:next_var]
@@ -357,7 +472,7 @@ class TestVariables:
     def test_voyage_api_key_required_sensitive(self, variables_tf):
         """TC-VAR-003: voyage_api_key is sensitive with no default."""
         assert "voyage_api_key" in variables_tf
-        voyage_section = variables_tf[variables_tf.index("voyage_api_key"):]
+        voyage_section = variables_tf[variables_tf.index("voyage_api_key") :]
         assert "sensitive" in voyage_section
         assert "true" in voyage_section
 
@@ -441,14 +556,22 @@ class TestAtlasClusterProvisioning:
 
     def test_advanced_cluster_resource_exists(self, atlas_tf_combined):
         """TC-ATLAS-001: mongodbatlas_advanced_cluster.cluster exists in terraform/atlas."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster")
-        assert block, "mongodbatlas_advanced_cluster.cluster resource not found in terraform/atlas"
-        assert 'cluster_type   = "REPLICASET"' in block or 'cluster_type = "REPLICASET"' in block, \
-            "cluster_type must be REPLICASET"
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster"
+        )
+        assert (
+            block
+        ), "mongodbatlas_advanced_cluster.cluster resource not found in terraform/atlas"
+        assert (
+            'cluster_type   = "REPLICASET"' in block
+            or 'cluster_type = "REPLICASET"' in block
+        ), "cluster_type must be REPLICASET"
 
     def test_cluster_spec_m10_replica_set(self, atlas_tf_combined):
         """TC-ATLAS-002: M10 instance, 3 nodes, 10 GB disk, AWS provider, priority 7."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster")
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster"
+        )
         assert 'instance_size = "M10"' in block, "instance_size must be M10"
         assert "node_count    = 3" in block or "node_count = 3" in block
         assert "disk_size_gb  = 10" in block or "disk_size_gb = 10" in block
@@ -457,16 +580,26 @@ class TestAtlasClusterProvisioning:
 
     def test_cluster_autoscaling(self, atlas_tf_combined):
         """TC-ATLAS-003: autoscaling enabled M10..M50."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster")
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster"
+        )
         assert "compute_enabled" in block and "true" in block
         assert "compute_scale_down_enabled" in block
-        assert 'compute_min_instance_size  = "M10"' in block or 'compute_min_instance_size = "M10"' in block
-        assert 'compute_max_instance_size  = "M50"' in block or 'compute_max_instance_size = "M50"' in block
+        assert (
+            'compute_min_instance_size  = "M10"' in block
+            or 'compute_min_instance_size = "M10"' in block
+        )
+        assert (
+            'compute_max_instance_size  = "M50"' in block
+            or 'compute_max_instance_size = "M50"' in block
+        )
         assert "disk_gb_enabled" in block
 
     def test_cluster_backup_and_termination(self, atlas_tf_combined):
         """TC-ATLAS-004: backup_enabled=true, termination_protection_enabled=false."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster")
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster"
+        )
         assert re.search(r"backup_enabled\s*=\s*true", block)
         assert re.search(r"termination_protection_enabled\s*=\s*false", block)
 
@@ -479,25 +612,35 @@ class TestAtlasClusterProvisioning:
         # Either we use a filtered local, or we conditionally include each tag.
         # The simplest contract is: there must be a `for k, v` filter or
         # explicit "if v != """ in the tags wiring.
-        assert ("for k, v in" in atlas_tf_combined and 'v != ""' in atlas_tf_combined), \
-            "atlas module must filter blank tag values to avoid TAG_VALUE_BLANK"
+        assert (
+            "for k, v in" in atlas_tf_combined and 'v != ""' in atlas_tf_combined
+        ), "atlas module must filter blank tag values to avoid TAG_VALUE_BLANK"
 
     def test_cluster_has_timeouts_block(self, atlas_tf_combined):
         """TC-ATLAS-004b: cluster has timeouts block (fail fast on stuck Atlas)."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster")
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_advanced_cluster", "cluster"
+        )
         assert "timeouts" in block, "cluster should declare a timeouts block"
         assert re.search(r"create\s*=", block), "timeouts block needs create timeout"
 
     def test_database_user_resource(self, atlas_tf_combined):
         """TC-ATLAS-005: mongodbatlas_database_user with atlasAdmin role."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_database_user", "app_user")
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_database_user", "app_user"
+        )
         assert block, "mongodbatlas_database_user.app_user resource not found"
-        assert 'role_name     = "atlasAdmin"' in block or 'role_name = "atlasAdmin"' in block
+        assert (
+            'role_name     = "atlasAdmin"' in block
+            or 'role_name = "atlasAdmin"' in block
+        )
         assert 'database_name = "admin"' in block
 
     def test_ip_access_list_resource(self, atlas_tf_combined):
         """TC-ATLAS-006: project_ip_access_list with 0.0.0.0/0."""
-        block = extract_resource_block(atlas_tf_combined, "mongodbatlas_project_ip_access_list", "workshop")
+        block = extract_resource_block(
+            atlas_tf_combined, "mongodbatlas_project_ip_access_list", "workshop"
+        )
         assert block
         assert '"0.0.0.0/0"' in block
 
@@ -523,7 +666,11 @@ class TestAtlasClusterProvisioning:
             assert var_name in atlas_variables_tf, f"variable {var_name} missing"
             var_start = atlas_variables_tf.index(f'variable "{var_name}"')
             next_var = atlas_variables_tf.find("\nvariable ", var_start + 1)
-            block = atlas_variables_tf[var_start:next_var] if next_var > 0 else atlas_variables_tf[var_start:]
+            block = (
+                atlas_variables_tf[var_start:next_var]
+                if next_var > 0
+                else atlas_variables_tf[var_start:]
+            )
             assert "sensitive" in block and "true" in block
 
     # --- Module split (REQ-E-250) ---
@@ -535,19 +682,28 @@ class TestAtlasClusterProvisioning:
             ("mongodbatlas_database_user", "app_user"),
             ("mongodbatlas_project_ip_access_list", "workshop"),
         ]:
-            assert not extract_resource_block(core_tf_combined, resource_type, resource_name), \
-                f"{resource_type}.{resource_name} must be removed from terraform/core (moved to terraform/atlas)"
+            assert not extract_resource_block(
+                core_tf_combined, resource_type, resource_name
+            ), f"{resource_type}.{resource_name} must be removed from terraform/core (moved to terraform/atlas)"
 
     def test_atlas_provider_removed_from_core(self, core_versions_tf):
         """TC-ATLAS-SPLIT-002: mongodbatlas provider removed from core (used only in atlas module)."""
-        assert "mongodbatlas" not in core_versions_tf, \
-            "mongodbatlas provider must be removed from terraform/core/versions.tf"
+        assert (
+            "mongodbatlas" not in core_versions_tf
+        ), "mongodbatlas provider must be removed from terraform/core/versions.tf"
 
     def test_atlas_vars_removed_from_core(self, core_variables_tf):
         """TC-ATLAS-SPLIT-003: atlas_* variables removed from core."""
-        for var in ["atlas_public_key", "atlas_private_key", "atlas_db_username", "atlas_db_password", "create_atlas_cluster"]:
-            assert f'variable "{var}"' not in core_variables_tf, \
-                f"variable {var} must be removed from terraform/core/variables.tf"
+        for var in [
+            "atlas_public_key",
+            "atlas_private_key",
+            "atlas_db_username",
+            "atlas_db_password",
+            "create_atlas_cluster",
+        ]:
+            assert (
+                f'variable "{var}"' not in core_variables_tf
+            ), f"variable {var} must be removed from terraform/core/variables.tf"
 
 
 class TestCoreVariablesInvariant:
@@ -565,5 +721,6 @@ class TestCoreVariablesInvariant:
             "aws_session_token",
             "bedrock_model_id",
         ]:
-            assert f'variable "{var_name}"' in core_variables_tf, \
-                f"existing variable {var_name} must not be removed"
+            assert (
+                f'variable "{var_name}"' in core_variables_tf
+            ), f"existing variable {var_name} must not be removed"

@@ -13,6 +13,7 @@ Library:
 """
 
 from __future__ import annotations
+from scripts.common.http_auth import basic_auth_token
 
 import argparse
 import json
@@ -537,6 +538,26 @@ def _check_docker_daemon(env: dict) -> CheckResult:
     )
 
 
+def _check_voyage_api_key(env: dict) -> CheckResult:
+    """The event knowledge base is embedded at seed time in Python
+    (asp_setup.populate_knowledge_base) using this key. A blank key does not
+    stop the deploy — KB population is skipped with a warning — but the
+    Vector Search evidence in Mission Control's reasoning panel stays empty,
+    which defeats the RAG half of the demo. Surface it before deploy."""
+    key = (env.get("TF_VAR_voyage_api_key") or "").strip()
+    if not key:
+        return CheckResult(
+            "warn",
+            "TF_VAR_voyage_api_key is not set — knowledge-base seeding will "
+            "be skipped and RAG evidence chunks will be empty",
+            remediation=(
+                "set TF_VAR_voyage_api_key in .env (Atlas project settings "
+                "→ AI / Voyage API keys), then run `uv run asp-setup` to seed"
+            ),
+        )
+    return CheckResult("pass", "voyage api key present")
+
+
 def _check_aws_caller_identity(env: dict) -> CheckResult:
     """`aws sts get-caller-identity` succeeds if AWS creds are usable."""
     import subprocess
@@ -565,7 +586,6 @@ def _check_confluent_cloud_auth(env: dict) -> CheckResult:
      Without this, `uv run preflight --phase terraform`
     has no Cloud-side probe and gives false confidence.
     """
-    import base64
     key = env.get("TF_VAR_confluent_cloud_api_key", "")
     secret = env.get("TF_VAR_confluent_cloud_api_secret", "")
     if not (key and secret):
@@ -574,7 +594,7 @@ def _check_confluent_cloud_auth(env: dict) -> CheckResult:
             "Confluent Cloud API key/secret not set",
             remediation="set TF_VAR_confluent_cloud_api_key and TF_VAR_confluent_cloud_api_secret in .env",
         )
-    cred = base64.b64encode(f"{key}:{secret}".encode()).decode()
+    cred = basic_auth_token(key, secret)
     req = urllib.request.Request(
         "https://api.confluent.cloud/iam/v2/service-accounts?page_size=1",
         headers={"Authorization": f"Basic {cred}"},
@@ -621,6 +641,12 @@ CHECKS: list[Check] = [
     Check("flink_rest_reachable", ("flink_dml",), "fail", network=True,  run=_check_flink_rest_reachable),
     Check("kafka_rest_reachable", ("publish_data", "flink_dml"), "fail", network=True, run=_check_kafka_rest_reachable),
     Check("docker_daemon",        ("mcp_server",), "fail", network=False, run=_check_docker_daemon),
+    # warn-severity: deploy proceeds without the key, but the knowledge base
+    # would be empty (see _check_voyage_api_key docstring). Named
+    # "voyage_embeddings" (not *_api_key): the redaction layer treats
+    # "<name> : <message>" as a secret key/value pair and masks the first
+    # message word when the name matches a secret-key pattern.
+    Check("voyage_embeddings",    ("asp_setup",), "warn", network=False, run=_check_voyage_api_key),
     # terraform phase needs auth probes for both
     # Confluent Cloud and AWS (Bedrock creds exercised at terraform time).
     Check("aws_caller_identity",  ("mcp_server", "terraform"), "fail", network=True,  run=_check_aws_caller_identity),

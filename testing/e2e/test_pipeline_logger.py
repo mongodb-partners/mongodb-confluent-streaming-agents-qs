@@ -6,8 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # TC-LOG-001 — REQ-E-220: PipelineLogger writes JSONL records
@@ -78,8 +77,9 @@ def test_TC_LOG_003_event_one_shot(tmp_path):
 def test_TC_LOG_004_bootstrap_logging_unmodified():
     """The new PipelineLogger writes to a different filename pattern
     than bootstrap_logging, ensuring INV-203 holds."""
-    from scripts.common import cli_logging
     import inspect
+
+    from scripts.common import cli_logging
     src = inspect.getsource(cli_logging.bootstrap_logging)
     # Existing tee path is logs/<name>-<timestamp>.log (no .jsonl)
     assert "{name}-" in src
@@ -93,8 +93,9 @@ def test_TC_LOG_004_bootstrap_logging_unmodified():
 def test_TC_LOG_005_setup_logging_unmodified():
     """The new PipelineLogger does not call logging.basicConfig,
     so it does not interfere with setup_logging."""
-    from scripts.common import pipeline_logger
     import inspect
+
+    from scripts.common import pipeline_logger
     src = inspect.getsource(pipeline_logger)
     assert "basicConfig" not in src
 
@@ -165,6 +166,7 @@ def test_TC_HEALTH_004_missing_creds_yield_unknown():
     prior partial deploy on the developer's machine.
     """
     from scripts import health
+
     # Force every credential AND terraform-state lookup to return empty.
     # Patching only _load_creds is insufficient — _check_flink and
     # _check_kafka read terraform outputs directly (collect_report:355).

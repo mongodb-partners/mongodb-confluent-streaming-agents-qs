@@ -95,8 +95,9 @@ class FlinkRestClient:
 
     # ── Internal: URL + auth ──────────────────────────────────────────────
     def _auth_header(self) -> str:
-        token = base64.b64encode(f"{self.api_key}:{self.api_secret}".encode()).decode()
-        return f"Basic {token}"
+        from scripts.common.http_auth import basic_auth_header
+
+        return basic_auth_header(self.api_key, self.api_secret)
 
     def _statement_url(self, name: str = "") -> str:
         base = (

@@ -4,12 +4,12 @@
 
 ### No anomalies detected
 
-**Cause:** The anomaly detection model requires at least 50 five-minute tumbling windows per zone (~4 hours 10 minutes of continuous data) before it starts producing output.
+**Cause:** The anomaly detection model requires at least 15 one-minute tumbling windows per zone (~15 minutes of continuous data) before it starts producing output.
 
 **Fix:**
 1. Verify data is flowing: `SELECT COUNT(*) FROM ride_requests`
-2. Ensure the pre-generated dataset covers enough time. Each batch file covers 24 hours (288 windows per zone), which satisfies the requirement.
-3. If you just deployed, wait 5-10 minutes for Flink to process the windowed aggregation.
+2. Ensure the pre-generated dataset covers enough time. Each batch file covers 24 hours of simulated timestamps, far above the 15-windows-per-zone threshold.
+3. If you just deployed, wait 1-2 minutes for Flink to process the windowed aggregation.
 4. If publishing additional batches doesn't produce new anomalies, the batch data uses escalating surge multipliers (3x through 12x) specifically designed to always exceed the ML model's learned upper bound regardless of training history. Verify the batch files haven't been replaced with uniform data.
 
 ### No dispatches in fleet.dispatch_log
@@ -19,7 +19,7 @@
 1. **dispatch-insert statement not running.** Check Flink statement status:
    - Navigate to Confluent Cloud > Flink > SQL workspace
    - Run: `SHOW STATEMENTS` or check the Flink UI
-   - If missing, click "Run Agent Dispatch" in the dashboard sidebar
+   - If missing or FAILED, run `uv run datagen` (its `restart_flink_dml` step recreates the DDL + DML statements), then trigger a fresh surge with `uv run surge`
 
 2. **ASP dispatch_log_ingestion processor failed.** Check ASP processor status in Atlas UI under Stream Processing. If FAILED, restart it.
 
@@ -41,6 +41,18 @@
 1. Delete the failed statement in the Flink UI
 2. Pull the latest code: `git pull`
 3. Redeploy: `uv run deploy` (it will skip already-completed steps)
+
+### anomalies-enriched-insert FAILED (vector-search timeout)
+
+**Symptom:** The `anomalies-enriched-insert` statement goes FAILED with a `VECTOR_SEARCH_AGG` timeout error, while the rest of the pipeline keeps running.
+
+**Cause:** The per-anomaly `VECTOR_SEARCH_AGG` call against Atlas can time out inside Flink under load. The statement already passes `MAP['client_timeout', 120, 'retry_count', 6]` to `VECTOR_SEARCH_AGG` (`client_timeout` is a per-call option map entry — it is NOT a table option), but timeouts can still exhaust the retries.
+
+**Impact:** This path is best-effort **by design**. `anomalies-sink-insert` reads directly from `anomalies_per_zone`, so anomalies keep reaching `analytics.zone_anomalies` (and Mission Control) even while enrichment is FAILED. Anomaly cards keep their synthesized `anomaly_reason`, but the LLM explanation and `top_chunk_*` evidence (merged onto the docs by the `anomalies_enriched_ingestion` ASP processor) stop updating until the statement runs again.
+
+**Fix:**
+1. Run `uv run datagen` — its `restart_flink_dml` step deletes and recreates the DML statements.
+2. If it fails again immediately, check the health of the `vector_index` Atlas Search index on `events.knowledge_base` in the Atlas UI.
 
 ### Flink statement shows FAILED with "SourceInvalidValue (1200)"
 
@@ -150,7 +162,7 @@ Then check the listener rule and flip weights to a TG with registered targets if
 uv run deploy   # Resumes from DEPLOY_PHASE=flink_dml; _submit_statement deletes the FAILED statement and recreates it.
 ```
 
-Or click "Run Agent Dispatch" in the Streamlit dashboard.
+Or run `uv run datagen` (restarts the DML statements), then `uv run surge` to trigger a fresh dispatch.
 
 ### `anomalies-enriched-insert` fails with `SourceInvalidValue (1200)` after deploy
 
@@ -183,7 +195,7 @@ restart_flink_dml(Path('.'))
 
 **Cause:** A previous agent-dispatch retry path dropped the `completed_actions` table but failed to recreate it (e.g. MCP was unhealthy at recreate time). The table never came back.
 
-**Fix:** The dashboard's "Run Agent Dispatch" button does just-in-time drops (only immediately before CREATEing the corresponding object) and stops the chain on the first error rather than half-applying. To recover, click "Run Agent Dispatch"; it will now correctly DROP + CREATE `completed_actions` in one transactional step.
+**Fix:** Run `uv run datagen`. Its `restart_flink_dml` step recreates the DDL statements (including `completed-actions-ctas`) before the DML statements, restoring the table and the `dispatch-insert` that reads from it. Alternatively, resume the deploy's Flink phase: `uv run deploy --from-phase flink_dml`.
 
 ### `terraform apply` fails on agents with "Permission denied to access the Schema Registry cluster"
 
@@ -266,13 +278,30 @@ This preflight was added so the failure surfaces in <2 seconds with a single act
 uv run asp-setup  # Re-runs setup, starts failed processors
 ```
 
-### events.knowledge_base is empty
+### events.knowledge_base is empty / reasoning panel has no evidence chunks
 
-**Check:**
-1. Verify `events.calendar` has the 10 seed events
-2. Verify the `event_knowledge_base_population` processor is STARTED in Atlas UI
-3. Check `events.validation_dlq` for failed documents
+**Symptom:** `events.knowledge_base` has no documents (or documents without `embedding` arrays), the Mission Control Events tab is empty, and the agent reasoning panel shows no retrieved evidence chunks.
+
+**Cause:** The knowledge base is embedded and seeded **in Python at deploy time** by `populate_knowledge_base()` (`scripts/asp_setup.py`) using the Voyage AI endpoint. If `TF_VAR_voyage_api_key` was missing or invalid during deploy, the seeding step warns and skips — the rest of the pipeline still works, so the failure is easy to miss. (Historical note: this used to be the `event_knowledge_base_population` ASP processor, but ASP `$https` calls to the Voyage endpoint fail with HTTP 400, so the processor was removed.)
+
+**Fix:**
+1. Set a valid `TF_VAR_voyage_api_key` in `.env` (and `TF_VAR_voyage_api_endpoint` if you override the default `https://ai.mongodb.com/v1/embeddings`)
+2. Verify `events.calendar` has the 10 seed events
+3. Re-run `uv run asp-setup` — its seed step re-runs `populate_knowledge_base()` (or use `uv run asp-setup --seed-only` to skip ASP provisioning)
 4. Verify Voyage AI is enabled on your Atlas project
+
+If the knowledge base **is** populated but anomaly cards never gain evidence chunks, check the rest of the RAG path:
+
+1. The Mission Control server (`uv run live`) runs a **RAG fallback worker**: ~40 s after an anomaly lands without chunks, it embeds the query via Voyage and runs Atlas `$vectorSearch` directly, writing `top_chunk_*` onto the document (`enriched_by: rag-fallback`). It requires `TF_VAR_voyage_api_key` in `.env` — the server logs `rag-fallback disabled` at startup if the key is missing. This is the reliable path; keep `uv run live` running.
+2. The streaming-native path is best-effort: the `anomalies-enriched-insert` Flink statement must be RUNNING (see the vector-search timeout section above — `uv run surge` recreates it automatically if FAILED) and the `anomalies_enriched_ingestion` ASP processor must be STARTED — it merges the Flink LLM explanation and `top_chunk_*` onto the anomaly documents when that statement survives.
+
+### ASP processor stop/start hangs or returns a 409 lock conflict
+
+**Symptom:** A processor restart appears to hang, or the Atlas API returns a conflict like `another operation ... has the lock` when starting a processor right after stopping it.
+
+**Cause:** Atlas serializes processor lifecycle operations. A `:start` issued while a `:stop` is still finalizing hits the "has the lock" conflict.
+
+**Fix:** The scripts handle this automatically — `scripts/common/asp_restart.py` waits for STOPPED, then retries `:start` up to 4 times with a short backoff on lock conflicts. If you restart a processor manually from the Atlas UI or API and it hangs, wait ~60 seconds and retry the start.
 
 ### dispatch_log_ingestion processor keeps failing
 
@@ -313,33 +342,44 @@ Then re-run `uv run deploy`.
 brew tap hashicorp/tap && brew install hashicorp/tap/terraform
 ```
 
-### Dashboard shows "Cannot load Flink credentials"
+## Mission Control Issues
 
-**Cause:** The `terraform/core/terraform.tfstate` file doesn't exist or doesn't contain the expected outputs.
+### Deploy says "Mission Control is open" but http://localhost:8502 refuses to connect
 
-**Fix:** Run `uv run deploy` at least through the Terraform step, or verify the tfstate file exists.
+**Cause:** The SSE sidecar (`scripts/live_server.py`) failed to start, or all ports in 8502-8510 were busy (deploy picks the first free one and records it in `LIVE_SSE_URL` in `.env`).
 
-### Deploy says "Dashboard running at http://localhost:8501" but the URL refuses to connect
-
-**Cause (pre-2026-05):** The launcher used `subprocess.Popen` with `stderr=DEVNULL`, then printed "running" after a 2s sleep without verifying the port bound. If Streamlit crashed during startup, the user got a misleading success message.
-
-**Fix:** As of 2026-05, `_launch_dashboard()` polls `127.0.0.1:<port>` for up to 20s and only prints "[ok] running" once the port actually accepts connections. Streamlit logs go to `logs/dashboard-<port>.log`. The child runs with `start_new_session=True` so it survives the parent shell. If the dashboard fails:
-
+**Fix:**
 ```bash
-# Inspect the log:
-tail -50 logs/dashboard-8501.log
+# Check which URL deploy recorded:
+grep LIVE_SSE_URL .env
 
-# Or run Streamlit in the foreground to see startup errors:
-uv run dashboard
+# Inspect the log:
+tail -50 logs/live-8502.log
+
+# Or run the sidecar in the foreground to see startup errors:
+uv run live
 ```
 
+### Mission Control shows RECONNECTING or OFFLINE
+
+**Cause:** The browser's SSE connection to `/api/stream` dropped (`RECONNECTING`), or it could not be re-established (`OFFLINE`). Either the live server is down, or the server itself lost its Atlas change stream.
+
+**Fix:** The browser auto-reconnects, and the server holds its Atlas change stream with exponential-backoff reconnect (1s → 30s cap) — transient blips heal on their own. If the badge stays OFFLINE:
+1. Restart the sidecar: `uv run live`
+2. Check `GET /api/health` on the live server for the watcher state
+3. Verify `TF_VAR_mongodb_connection_string` (plus username/password) in `.env` resolves and is valid
+4. Check Atlas Network Access: your machine's IP must be on the project's IP access list
+
+### Mission Control panels are empty
+
+**Cause:** The page bootstraps from Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`, `fleet.dispatch_log`, `events.knowledge_base`, `fleet.vessel_catalog`). Empty panels mean those collections have no data yet — the UI is a pure projection of database writes.
+
+**Fix:**
+1. Run `uv run health` to see which pipeline stage is not producing
+2. Start data generation (`uv run datagen`) and trigger a surge (`uv run surge`)
+3. If only the Events tab is empty, see "events.knowledge_base is empty" above
+
 ## Data Issues
-
-### Dashboard shows empty charts
-
-**Cause:** Time filter is set to "Last 24 hours" but data timestamps are older.
-
-**Fix:** Change the time filter to "All time" in the dashboard sidebar.
 
 ### publish_data returns exit code 1
 

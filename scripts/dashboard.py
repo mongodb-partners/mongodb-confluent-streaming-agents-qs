@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from scripts.common.http_auth import basic_auth_token
+
 # ---------------------------------------------------------------------------
 # Try-imports with HAS_* flags (project convention)
 # ---------------------------------------------------------------------------
@@ -84,115 +86,25 @@ except ImportError:
     HAS_PYDECK = False
 
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-FALLBACK_ZONES = [
-    "Bywater",
-    "Central Business District (CBD)",
-    "French Quarter",
-    "Garden District",
-    "Marigny",
-    "Uptown",
-    "Warehouse District",
-]
-
-# Mississippi-river-side anchor for each zone — boats animate between these
-# points on the live dispatch map. Coordinates are [longitude, latitude],
-# the order pydeck/deck.gl expects. Both the long-form ("Central Business
-# District (CBD)") and short ("CBD") names map to the same point because
-# the Flink agent prompt produces "CBD" while vessel_catalog stores the
-# long form.
-ZONE_COORDS = {
-    "Bywater": [-90.0469, 29.9626],
-    "Central Business District (CBD)": [-90.0715, 29.9499],
-    "CBD": [-90.0715, 29.9499],
-    "French Quarter": [-90.0628, 29.9584],
-    "Garden District": [-90.0840, 29.9290],
-    "Marigny": [-90.0560, 29.9628],
-    "Uptown": [-90.1040, 29.9320],
-    "Warehouse District": [-90.0720, 29.9445],
-}
-
-# Mississippi River centerline through New Orleans, sourced from
-# OpenStreetMap (way IDs 163557188 + 163762082 + 163762083). These are
-# REAL river-channel points from the OSM "waterway=river"+"name=Mississippi
-# River" geometry, not hand-estimated guesses. Order: east (Industrial
-# Canal mouth, downstream) to west (Carrollton bend, upstream of NOLA).
-# Coordinates are [longitude, latitude] in deck.gl order. To regenerate,
-# run scripts/build_river_waypoints.py (Overpass API query + nearest
-# match per zone).
-RIVER_WAYPOINTS: List[List[float]] = [
-    [-89.95517, 29.92272],   #  0  Industrial Canal mouth (downstream)
-    [-89.96030, 29.92375],   #  1
-    [-89.98321, 29.92835],   #  2
-    [-90.01381, 29.94717],   #  3  Lower 9th / Holy Cross stretch
-    [-90.02858, 29.95300],   #  4
-    [-90.03519, 29.95562],   #  5
-    [-90.04530, 29.95877],   #  6
-    [-90.04844, 29.95930],   #  7  Bywater / Press St wharves
-    [-90.05118, 29.95943],   #  8
-    [-90.05441, 29.95911],   #  9  Marigny / Esplanade wharf
-    [-90.05654, 29.95794],   # 10
-    [-90.05843, 29.95657],   # 11  French Quarter / Toulouse wharf
-    [-90.05964, 29.95443],   # 12
-    [-90.05980, 29.95154],   # 13  CBD / Spanish Plaza
-    [-90.05810, 29.94243],   # 14  Warehouse District / Convention Center
-    [-90.05829, 29.93750],   # 15
-    [-90.05856, 29.93364],   # 16
-    [-90.05933, 29.93101],   # 17  Mardi Gras World stretch
-    [-90.06101, 29.92850],   # 18
-    [-90.06334, 29.92480],   # 19
-    [-90.06752, 29.92121],   # 20
-    [-90.07571, 29.91709],   # 21  Garden District / Tchoupitoulas
-    [-90.08574, 29.91419],   # 22
-    [-90.09345, 29.91197],   # 23  Uptown / Audubon
-    [-90.10516, 29.90865],   # 24
-    [-90.11076, 29.90787],   # 25
-    [-90.11577, 29.90775],   # 26
-    [-90.12177, 29.90917],   # 27
-    [-90.12829, 29.91077],   # 28
-    [-90.13402, 29.91309],   # 29  Carrollton bend (river turns north)
-    [-90.13722, 29.91705],   # 30
-    [-90.13881, 29.92302],   # 31
-    [-90.13898, 29.94599],   # 32
-    [-90.14146, 29.95238],   # 33
-    [-90.14496, 29.95547],   # 34
-    [-90.15038, 29.95621],   # 35
-    [-90.15676, 29.95488],   # 36
-    [-90.18412, 29.93250],   # 37
-    [-90.19763, 29.92420],   # 38  far west (upstream of NOLA)
-]
-
-# Map each zone to its nearest waypoint index on the OSM river.
-# Boat trips use the subsequence of RIVER_WAYPOINTS between origin and
-# destination indices, so paths automatically follow the river's true
-# centerline rather than crossing land.
-ZONE_RIVER_INDEX: Dict[str, int] = {
-    "Bywater": 7,
-    "Marigny": 9,
-    "French Quarter": 11,
-    "Central Business District (CBD)": 13,
-    "CBD": 13,
-    "Warehouse District": 14,
-    "Garden District": 21,
-    "Uptown": 23,
-}
-
-# Backward-compat single-point dock coords (used by some helpers and tests).
-# Each is the river waypoint for that zone.
-ZONE_DOCK_COORDS: Dict[str, List[float]] = {
-    z: list(RIVER_WAYPOINTS[i]) for z, i in ZONE_RIVER_INDEX.items()
-}
-
-# 30-second loop window for the TripsLayer playhead (in milliseconds).
-# Each boat trip occupies 8 s within the loop, leaving headroom for
-# trail fade. Tuned for ~2 fps Streamlit refresh.
-TRIPS_LOOP_MS = 30_000
-TRIPS_DURATION_MS = 8_000
-TRIPS_TRAIL_MS = 4_000
+# Map geometry + window constants live in scripts/common/geo.py (shared with
+# the Mission Control HUD via live_server's /api/bootstrap). Re-exported here
+# so existing imports/tests (`dashboard.ZONE_COORDS`, …) keep working.
+from scripts.common.geo import (  # noqa: F401
+    FALLBACK_ZONES,
+    MAP_VIEW,
+    RIVER_WAYPOINTS,
+    TRIPS_DURATION_MS,
+    TRIPS_LOOP_MS,
+    TRIPS_TRAIL_MS,
+    WINDOW_MINUTES,
+    ZONE_COORDS,
+    ZONE_DOCK_COORDS,
+    ZONE_RIVER_INDEX,
+)
 
 COLLECTIONS = {
     "zone_traffic": ("analytics", "zone_traffic"),
@@ -205,8 +117,8 @@ EMPTY_STATE_MESSAGES = {
     "zone_traffic": (
         "No traffic data yet. Use the **Start Data Generation** button in the "
         "Actions sidebar (or run `uv run datagen`). ShadowTraffic produces "
-        "simulated ride requests into Kafka; Flink aggregates them into 5-minute "
-        "tumbling windows. First data points typically appear after ~5 minutes."
+        "simulated ride requests into Kafka; Flink aggregates them into 1-minute "
+        "tumbling windows. First data points typically appear after ~1 minute."
     ),
     "anomalies": (
         "No anomalies detected yet. Flink's DETECT_ANOMALIES function needs a "
@@ -648,19 +560,37 @@ WHERE is_surge = true;"""
 AGENT_SQL_STEPS = [
     ("dashboard-create-tool", AGENT_SQL_CREATE_TOOL),
     ("dashboard-create-agent", AGENT_SQL_CREATE_AGENT),
-    ("dashboard-create-completed-actions-table", AGENT_SQL_CREATE_COMPLETED_ACTIONS_TABLE),
+    (
+        "dashboard-create-completed-actions-table",
+        AGENT_SQL_CREATE_COMPLETED_ACTIONS_TABLE,
+    ),
     ("dashboard-create-completed-actions", AGENT_SQL_INSERT_COMPLETED_ACTIONS),
 ]
+
+# `uv run deploy` creates the SAME shared catalog objects (mongodb_fleet tool,
+# boat_dispatch_agent, completed_actions) but under CANONICAL statement-record
+# names, not the dashboard-* names above. The dashboard must recognise a
+# deploy-provisioned pipeline so it does NOT offer to "Run Agent Dispatch" and
+# then DROP the shared objects the deployed dispatch-insert depends on.
+# These names mirror scripts/deploy.py's DML_STATEMENTS / bootstrap steps.
+DEPLOY_DISPATCH_STATEMENT = "dispatch-insert"
+DEPLOY_AGENT_STATEMENTS = (
+    "create-tool-mongodb-fleet",
+    "create-agent-boat-dispatch",
+    "dispatch-insert",
+)
 
 
 # ---------------------------------------------------------------------------
 # Streamlit detection
 # ---------------------------------------------------------------------------
 
+
 def _is_running_in_streamlit() -> bool:
     """Check whether we are currently running inside a Streamlit server."""
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
+
         return get_script_run_ctx() is not None
     except Exception:
         return False
@@ -669,6 +599,7 @@ def _is_running_in_streamlit() -> bool:
 # ---------------------------------------------------------------------------
 # Credential Resolution
 # ---------------------------------------------------------------------------
+
 
 def _load_env_defaults(project_root: Optional[Path] = None) -> dict:
     """Load defaults from .env if available.
@@ -713,48 +644,21 @@ def _build_uri(connection_string: str, username: str, password: str) -> str:
     URI parsing lives in one place.
     """
     from scripts.common.mongo import build_uri
+
     return build_uri(connection_string, username, password)
 
 
 def _resolve_mongodb_uri(project_root: Optional[Path] = None) -> Optional[str]:
-    """Resolve MongoDB URI using a 4-source credential chain.
+    """Resolve MongoDB URI using the shared 4-source credential chain.
 
-    Resolution order (first match wins):
-    1. .env -> TF_VAR_mongodb_connection_string
-    2. terraform/agents/terraform.tfvars
-    3. Environment variable MONGODB_URI
-    4. None (sidebar fallback in Streamlit)
+    Delegates to scripts.common.mongo_uri so the dashboard and the live SSE
+    sidecar resolve the connection string identically (spec INV-005). The
+    resolution order (first match wins) is: .env -> terraform.tfvars ->
+    $MONGODB_URI -> None (Streamlit sidebar fallback).
     """
-    # Source 1: .env
-    env = _load_env_defaults(project_root)
-    conn = env.get("TF_VAR_mongodb_connection_string")
-    if conn:
-        user = env.get("TF_VAR_mongodb_username", "")
-        pwd = env.get("TF_VAR_mongodb_password", "")
-        if "://" in conn and "@" in conn:
-            return conn
-        if user and pwd:
-            return _build_uri(conn, user, pwd)
-        return conn
+    from scripts.common.mongo_uri import resolve_mongodb_uri
 
-    # Source 2: terraform.tfvars
-    root = project_root or _get_project_root()
-    if root:
-        tfvars_path = root / "terraform" / "agents" / "terraform.tfvars"
-        tfvars = _parse_tfvars(tfvars_path)
-        conn = tfvars.get("mongodb_connection_string")
-        user = tfvars.get("mongodb_username", "")
-        pwd = tfvars.get("mongodb_password", "")
-        if conn and user and pwd:
-            return _build_uri(conn, user, pwd)
-
-    # Source 3: Environment variable
-    env_uri = os.environ.get("MONGODB_URI")
-    if env_uri:
-        return env_uri
-
-    # Source 4: None — sidebar fallback
-    return None
+    return resolve_mongodb_uri(project_root=project_root)
 
 
 def _get_project_root() -> Optional[Path]:
@@ -777,11 +681,13 @@ def _get_boat_data_uri() -> Optional[str]:
     connected client.
     """
     import base64 as _b64
+
     root = _get_project_root() or Path(".")
     boat_path = root / "assets" / "boat-icon.png"
     try:
-        return ("data:image/png;base64,"
-                + _b64.b64encode(boat_path.read_bytes()).decode())
+        return (
+            "data:image/png;base64," + _b64.b64encode(boat_path.read_bytes()).decode()
+        )
     except OSError:
         return None
 
@@ -790,7 +696,10 @@ def _get_boat_data_uri() -> Optional[str]:
 # Flink REST API helpers
 # ---------------------------------------------------------------------------
 
-def _load_flink_credentials(project_root: Optional[Path] = None) -> Optional[Dict[str, str]]:
+
+def _load_flink_credentials(
+    project_root: Optional[Path] = None,
+) -> Optional[Dict[str, str]]:
     """Load Flink credentials from terraform/core/terraform.tfstate.
 
     Reads the state file directly (same pattern as sql_extractors.py) and
@@ -889,14 +798,18 @@ def _delete_flink_statement(creds: Dict[str, str], name: str) -> bool:
         f"/environments/{creds['environment_id']}/statements/{name}"
     )
     try:
-        resp = _requests_mod.delete(url, auth=(creds["flink_api_key"], creds["flink_api_secret"]), timeout=15)
+        resp = _requests_mod.delete(
+            url, auth=(creds["flink_api_key"], creds["flink_api_secret"]), timeout=15
+        )
         return resp.status_code in (200, 202, 404)
     except Exception:
         return False
 
 
 def _wait_for_statement_deleted(
-    creds: Dict[str, str], name: str, timeout: int = 30,
+    creds: Dict[str, str],
+    name: str,
+    timeout: int = 30,
 ) -> bool:
     """Poll until Flink reports the statement no longer exists.
 
@@ -910,6 +823,7 @@ def _wait_for_statement_deleted(
     we can't confirm DELETE.
     """
     import time
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         phase = _check_flink_statement_exists(creds, name)
@@ -919,9 +833,7 @@ def _wait_for_statement_deleted(
     return False
 
 
-def _check_flink_statement_exists(
-    creds: Dict[str, str], name: str
-) -> Optional[str]:
+def _check_flink_statement_exists(creds: Dict[str, str], name: str) -> Optional[str]:
     """Check whether a Flink statement already exists by name.
 
     Returns the status phase string (e.g. ``"RUNNING"``, ``"COMPLETED"``)
@@ -961,6 +873,7 @@ def _connect_mongodb(uri: str) -> Optional[Any]:
         return None
     try:
         from scripts.common.mongo import get_client
+
         client = get_client(uri, app_name="streaming-agents-dashboard")
         client.admin.command("ping")
         return client
@@ -971,6 +884,7 @@ def _connect_mongodb(uri: str) -> Optional[Any]:
 # ---------------------------------------------------------------------------
 # Data type helpers
 # ---------------------------------------------------------------------------
+
 
 def _convert_decimal128(value: Any) -> Any:
     """Convert Decimal128 to float, pass through other types."""
@@ -1005,7 +919,9 @@ def _parse_dispatch_json(raw: Any) -> Any:
 # back to the ENTIRE raw transcript. This cleaner makes the dashboard
 # robust regardless of what landed in dispatch_summary.
 _TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL | re.IGNORECASE)
-_TOOL_RESPONSE_RE = re.compile(r"<tool_response>.*?</tool_response>", re.DOTALL | re.IGNORECASE)
+_TOOL_RESPONSE_RE = re.compile(
+    r"<tool_response>.*?</tool_response>", re.DOTALL | re.IGNORECASE
+)
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
@@ -1037,11 +953,12 @@ def _clean_dispatch_summary(raw: Any) -> str:
     # Prefer the explicit "Dispatch Summary:" section when present.
     m = re.search(rf"{emph}\s*Dispatch\s+Summary\s*:?\s*{emph}\s*", text, re.IGNORECASE)
     if m:
-        after = text[m.end():]
+        after = text[m.end() :]
         # Cut at the next structured-section marker (also emphasis-wrapped).
         stop = re.search(
             rf"\n*\s*{emph}\s*(?:Dispatch\s+JSON|API\s+Response)\s*:?",
-            after, re.IGNORECASE,
+            after,
+            re.IGNORECASE,
         )
         summary = after[: stop.start()] if stop else after
         cleaned = _strip_stray_emphasis(summary)
@@ -1071,6 +988,7 @@ def _strip_stray_emphasis(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Dynamic zone list
 # ---------------------------------------------------------------------------
+
 
 def _fetch_distinct_zones_uncached(client: Optional[Any]) -> List[str]:
     """Return sorted distinct zones from analytics.zone_traffic.
@@ -1117,6 +1035,7 @@ def _fetch_distinct_zones(client: Optional[Any]) -> List[str]:
 # Filter builders
 # ---------------------------------------------------------------------------
 
+
 def _build_zone_filter(zones: List[str], field: str = "zone") -> dict:
     """Build a MongoDB zone filter."""
     if not zones:
@@ -1124,8 +1043,9 @@ def _build_zone_filter(zones: List[str], field: str = "zone") -> dict:
     return {field: {"$in": zones}}
 
 
-def _build_time_filter(cutoff: Optional[datetime], field: str = "window_start",
-                       epoch_millis: bool = False) -> dict:
+def _build_time_filter(
+    cutoff: Optional[datetime], field: str = "window_start", epoch_millis: bool = False
+) -> dict:
     """Build a MongoDB time range filter.
 
     Args:
@@ -1145,6 +1065,7 @@ def _build_time_filter(cutoff: Optional[datetime], field: str = "window_start",
 # ---------------------------------------------------------------------------
 # Data fetching functions
 # ---------------------------------------------------------------------------
+
 
 def _get_ride_requests_count() -> int:
     """Get total ride requests from Kafka topic offsets (cached in session_state).
@@ -1169,9 +1090,8 @@ def _get_ride_requests_count() -> int:
 
 def _fetch_ride_requests_from_kafka() -> Optional[int]:
     """Query Kafka REST API for ride_requests topic message count."""
-    import base64
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     root = _get_project_root()
     if root is None:
@@ -1185,7 +1105,7 @@ def _fetch_ride_requests_from_kafka() -> Optional[int]:
     if not all([rest_endpoint, cluster_id, api_key, api_secret]):
         return None
 
-    cred = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+    cred = basic_auth_token(api_key, api_secret)
     headers = {"Authorization": f"Basic {cred}"}
     topic = "ride_requests"
 
@@ -1238,7 +1158,9 @@ def _count_ride_requests_jsonl() -> int:
         return 0
 
 
-def _get_collection_counts(client: Any, time_filter: Optional[datetime] = None) -> Dict[str, int]:
+def _get_collection_counts(
+    client: Any, time_filter: Optional[datetime] = None
+) -> Dict[str, int]:
     """Get document counts for all monitored collections.
 
     knowledge_base uses estimatedDocumentCount (O(1) metadata
@@ -1276,7 +1198,9 @@ def _get_collection_counts(client: Any, time_filter: Optional[datetime] = None) 
     return counts
 
 
-def _fetch_zone_traffic(client: Any, zones: List[str], cutoff: Optional[datetime]) -> List[dict]:
+def _fetch_zone_traffic(
+    client: Any, zones: List[str], cutoff: Optional[datetime]
+) -> List[dict]:
     """Fetch zone traffic data from analytics.zone_traffic."""
     db = client["analytics"]
     coll = db["zone_traffic"]
@@ -1288,7 +1212,12 @@ def _fetch_zone_traffic(client: Any, zones: List[str], cutoff: Optional[datetime
         docs = list(coll.find(query).sort("window_start", 1).limit(500))
         for doc in docs:
             doc.pop("_id", None)
-            for field in ["total_revenue", "avg_fare", "total_passengers", "request_count"]:
+            for field in [
+                "total_revenue",
+                "avg_fare",
+                "total_passengers",
+                "request_count",
+            ]:
                 if field in doc:
                     doc[field] = _convert_decimal128(doc[field])
             # Convert epoch millis to datetime for Plotly
@@ -1302,7 +1231,9 @@ def _fetch_zone_traffic(client: Any, zones: List[str], cutoff: Optional[datetime
         return []
 
 
-def _fetch_anomalies(client: Any, zones: List[str], cutoff: Optional[datetime]) -> List[dict]:
+def _fetch_anomalies(
+    client: Any, zones: List[str], cutoff: Optional[datetime]
+) -> List[dict]:
     """Fetch anomalies from analytics.zone_anomalies."""
     db = client["analytics"]
     coll = db["zone_anomalies"]
@@ -1349,8 +1280,8 @@ def _fetch_dispatches_for_map(
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=recent_window_minutes)
     recent = list(
         coll.find({"dispatched_at": {"$gte": cutoff}})
-            .sort("dispatched_at", -1)
-            .limit(50)
+        .sort("dispatched_at", -1)
+        .limit(50)
     )
     if recent:
         return recent
@@ -1434,11 +1365,17 @@ def _build_dispatch_trips(
         if dest is None:
             continue
         per_dispatch_trips = _build_trips_from_dispatch_json(
-            doc, vessel_home, loop_ms, duration_ms,
+            doc,
+            vessel_home,
+            loop_ms,
+            duration_ms,
         )
         if not per_dispatch_trips:
             per_dispatch_trips = _build_fallback_trips_for_dispatch(
-                doc, vessel_home, loop_ms, duration_ms,
+                doc,
+                vessel_home,
+                loop_ms,
+                duration_ms,
             )
         trips.extend(per_dispatch_trips)
     return trips
@@ -1452,7 +1389,9 @@ def _zone_dock(zone_name: Optional[str]) -> Optional[List[float]]:
     return ZONE_DOCK_COORDS.get(zone_name) or ZONE_COORDS.get(zone_name)
 
 
-def _river_path_between(origin_zone: str, dest_zone: str) -> Optional[List[List[float]]]:
+def _river_path_between(
+    origin_zone: str, dest_zone: str
+) -> Optional[List[List[float]]]:
     """Return the river-centerline polyline from origin_zone's dock to
     dest_zone's dock, including all intermediate waypoints. Boats render
     along this multi-segment path so they follow the actual Mississippi
@@ -1466,12 +1405,13 @@ def _river_path_between(origin_zone: str, dest_zone: str) -> Optional[List[List[
     if a is None or b is None or a == b:
         return None
     if a < b:
-        return [list(p) for p in RIVER_WAYPOINTS[a:b + 1]]
-    return [list(p) for p in RIVER_WAYPOINTS[b:a + 1][::-1]]
+        return [list(p) for p in RIVER_WAYPOINTS[a : b + 1]]
+    return [list(p) for p in RIVER_WAYPOINTS[b : a + 1][::-1]]
 
 
-def _evenly_spaced_timestamps(path: List[List[float]], t0: int,
-                              duration_ms: int) -> List[int]:
+def _evenly_spaced_timestamps(
+    path: List[List[float]], t0: int, duration_ms: int
+) -> List[int]:
     """Distribute timestamps evenly across the path's segments,
     weighted by segment length so the boat moves at constant speed
     along the river (matching the visual expectation of a real boat
@@ -1511,7 +1451,7 @@ def _make_river_trip(
     path = _river_path_between(origin_zone, dest_zone)
     if not path or len(path) < 2:
         return None
-    t0 = (hash(vessel_id) % max(1, loop_ms - duration_ms))
+    t0 = hash(vessel_id) % max(1, loop_ms - duration_ms)
     timestamps = _evenly_spaced_timestamps(path, t0, duration_ms)
     return {
         "path": path,
@@ -1546,8 +1486,7 @@ def _build_trips_from_dispatch_json(
         origin_name = vessel_home.get(vessel_id)
         if not origin_name or origin_name not in ZONE_RIVER_INDEX:
             continue
-        trip = _make_river_trip(vessel_id, origin_name, dest_name,
-                                loop_ms, duration_ms)
+        trip = _make_river_trip(vessel_id, origin_name, dest_name, loop_ms, duration_ms)
         if trip is not None:
             out.append(trip)
     return out
@@ -1560,7 +1499,7 @@ def _build_fallback_trips_for_dispatch(
     duration_ms: int = TRIPS_DURATION_MS,
     max_boats: int = 3,
 ) -> List[Dict[str, Any]]:
-    """ synthesize up to `max_boats` deterministic trips
+    """synthesize up to `max_boats` deterministic trips
     into doc.pickup_zone from vessels whose base_zone is NOT the
     surge zone. Used when dispatch_json is unparseable.
 
@@ -1571,7 +1510,8 @@ def _build_fallback_trips_for_dispatch(
     if dest_name not in ZONE_RIVER_INDEX:
         return []
     candidates = sorted(
-        vid for vid, home in vessel_home.items()
+        vid
+        for vid, home in vessel_home.items()
         if home and home != dest_name and home in ZONE_RIVER_INDEX
     )
     if not candidates:
@@ -1579,8 +1519,7 @@ def _build_fallback_trips_for_dispatch(
     out: List[Dict[str, Any]] = []
     for vessel_id in candidates[:max_boats]:
         origin_name = vessel_home[vessel_id]
-        trip = _make_river_trip(vessel_id, origin_name, dest_name,
-                                loop_ms, duration_ms)
+        trip = _make_river_trip(vessel_id, origin_name, dest_name, loop_ms, duration_ms)
         if trip is not None:
             out.append(trip)
     return out
@@ -1598,6 +1537,7 @@ def _interpolate_boat_positions(
     the icon can rotate to face its direction of travel.
     """
     import math
+
     icons: List[Dict[str, Any]] = []
     for trip in trips:
         path = trip.get("path") or []
@@ -1671,23 +1611,48 @@ def _build_zone_markers(active_destinations: set) -> List[Dict[str, Any]]:
 # Data preparation helpers (pure functions, no Streamlit dependency)
 # ---------------------------------------------------------------------------
 
+
 def _build_kpi_data(counts: Dict[str, int]) -> List[Dict[str, Any]]:
     """Build KPI metric card data from collection counts."""
     return [
-        {"label": "Ride Requests", "value": counts.get("ride_requests", 0), "icon": "car"},
-        {"label": "Traffic Windows", "value": counts.get("zone_traffic", 0), "icon": "road"},
-        {"label": "Anomalies Detected", "value": counts.get("anomalies", 0), "icon": "warning"},
-        {"label": "Dispatches Logged", "value": counts.get("dispatches", 0), "icon": "truck"},
-        {"label": "KB Events", "value": counts.get("knowledge_base", 0), "icon": "calendar"},
+        {
+            "label": "Ride Requests",
+            "value": counts.get("ride_requests", 0),
+            "icon": "car",
+        },
+        {
+            "label": "Traffic Windows",
+            "value": counts.get("zone_traffic", 0),
+            "icon": "road",
+        },
+        {
+            "label": "Anomalies Detected",
+            "value": counts.get("anomalies", 0),
+            "icon": "warning",
+        },
+        {
+            "label": "Dispatches Logged",
+            "value": counts.get("dispatches", 0),
+            "icon": "truck",
+        },
+        {
+            "label": "KB Events",
+            "value": counts.get("knowledge_base", 0),
+            "icon": "calendar",
+        },
     ]
 
 
 def _seconds_to_next_window(now: Optional[datetime] = None) -> int:
-    """Seconds remaining until the next 5-minute tumbling window boundary."""
+    """Seconds remaining until the next tumbling-window boundary.
+
+    Window size is WINDOW_MINUTES (matches the Flink windowed_traffic view).
+    """
     if now is None:
         now = datetime.now(timezone.utc)
-    elapsed = (now.minute % 5) * 60 + now.second
-    return 300 - elapsed
+    window_secs = WINDOW_MINUTES * 60
+    elapsed = (now.minute % WINDOW_MINUTES) * 60 + now.second
+    return window_secs - elapsed
 
 
 def _build_architecture_html(counts: Dict[str, int]) -> str:
@@ -1697,8 +1662,8 @@ def _build_architecture_html(counts: Dict[str, int]) -> str:
         if count > 0:
             return (
                 '<span style="display:inline-block;width:8px;height:8px;'
-                'border-radius:50%;background:#00ED64;margin-right:6px;'
-                'box-shadow:0 0 6px #00ED64;'
+                "border-radius:50%;background:#00ED64;margin-right:6px;"
+                "box-shadow:0 0 6px #00ED64;"
                 'animation:node-pulse 2s ease-in-out infinite;"></span>'
             )
         return (
@@ -1718,12 +1683,12 @@ def _build_architecture_html(counts: Dict[str, int]) -> str:
         glow = f"0 0 12px {color}33" if count and count > 0 else "none"
         return (
             f'<div style="display:inline-flex;align-items:center;'
-            f'border:1px solid {color}44;border-radius:8px;'
-            f'padding:6px 14px;margin:3px;font-size:0.8em;'
-            f'background:rgba(12,17,23,0.8);color:#F0F4F8;'
-            f'backdrop-filter:blur(8px);box-shadow:{glow};'
+            f"border:1px solid {color}44;border-radius:8px;"
+            f"padding:6px 14px;margin:3px;font-size:0.8em;"
+            f"background:rgba(12,17,23,0.8);color:#F0F4F8;"
+            f"backdrop-filter:blur(8px);box-shadow:{glow};"
             f'transition:all 0.3s ease;white-space:nowrap;">'
-            f'{dot}<span>{label}</span>{badge}</div>'
+            f"{dot}<span>{label}</span>{badge}</div>"
         )
 
     def _arrow() -> str:
@@ -1861,8 +1826,12 @@ def _prepare_anomaly_cards(raw: List[dict]) -> List[Dict[str, Any]]:
     """Prepare anomaly data for card-based display."""
     cards = []
     for doc in raw:
-        actual = _convert_decimal128(doc.get("request_count", doc.get("actual_count", 0)))
-        expected = _convert_decimal128(doc.get("expected_requests", doc.get("expected_count", 0)))
+        actual = _convert_decimal128(
+            doc.get("request_count", doc.get("actual_count", 0))
+        )
+        expected = _convert_decimal128(
+            doc.get("expected_requests", doc.get("expected_count", 0))
+        )
         try:
             actual = float(actual) if actual else 0
             expected = float(expected) if expected else 0
@@ -1930,6 +1899,7 @@ def _prepare_kb_cards(raw: List[dict]) -> List[Dict[str, Any]]:
 # Streamlit rendering functions
 # ---------------------------------------------------------------------------
 
+
 def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
     """Render sidebar controls and return filter configuration."""
     if not HAS_STREAMLIT:
@@ -1961,14 +1931,18 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
         # Zone filter
         all_zones = _fetch_distinct_zones(client)
         selected_zones = st.multiselect(
-            "Filter by Zone", options=all_zones, default=[],
+            "Filter by Zone",
+            options=all_zones,
+            default=[],
             help="Select one or more New Orleans zones to filter all panels. Leave empty to show all zones.",
         )
 
         # Time range
         time_range = st.selectbox(
-            "Time Range", options=list(TIME_RANGE_OPTIONS.keys()), index=4,
-            help="Controls how far back to query. Traffic windows are 5-minute Flink TUMBLE windows.",
+            "Time Range",
+            options=list(TIME_RANGE_OPTIONS.keys()),
+            index=4,
+            help="Controls how far back to query. Traffic windows are 1-minute Flink TUMBLE windows.",
         )
         td = TIME_RANGE_OPTIONS[time_range]
         cutoff = (datetime.now(timezone.utc) - td) if td else None
@@ -1982,9 +1956,7 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
             # Stats fragment refreshes at the user's chosen cadence (or
             # never, if auto-refresh is off) without rerunning the rest of
             # the sidebar (which contains buttons whose state must persist).
-            stats_refresh_s = (
-                int(refresh_interval) if auto_refresh else None
-            )
+            stats_refresh_s = int(refresh_interval) if auto_refresh else None
 
             # handle None sentinel returned by
             # _get_collection_counts on Mongo error. Without this, the
@@ -1997,25 +1969,31 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
             def _quick_stats_fragment():
                 counts = _get_collection_counts(client, cutoff)
                 st.metric(
-                    "Ride Requests", _kpi_value(counts.get("ride_requests")),
+                    "Ride Requests",
+                    _kpi_value(counts.get("ride_requests")),
                     help="Total ride request messages published to Kafka (from pre-generated dataset).",
                 )
                 st.metric(
-                    "Traffic Windows", _kpi_value(counts.get("zone_traffic")),
-                    help="Documents in analytics.zone_traffic — 5-minute Flink TUMBLE window aggregates of ride requests per zone.",
+                    "Traffic Windows",
+                    _kpi_value(counts.get("zone_traffic")),
+                    help="Documents in analytics.zone_traffic — 1-minute Flink TUMBLE window aggregates of ride requests per zone.",
                 )
                 st.metric(
-                    "Anomalies", _kpi_value(counts.get("anomalies")),
+                    "Anomalies",
+                    _kpi_value(counts.get("anomalies")),
                     help="Documents in analytics.zone_anomalies — zones where ride requests significantly exceeded the expected baseline.",
                 )
                 st.metric(
-                    "Dispatches", _kpi_value(counts.get("dispatches")),
+                    "Dispatches",
+                    _kpi_value(counts.get("dispatches")),
                     help="Documents in fleet.dispatch_log — agent-dispatched boat reassignments in response to detected anomalies.",
                 )
                 st.metric(
-                    "KB Events", _kpi_value(counts.get("knowledge_base")),
+                    "KB Events",
+                    _kpi_value(counts.get("knowledge_base")),
                     help="Documents in events.knowledge_base — local events (sports, concerts, festivals) with vector embeddings for RAG.",
                 )
+
             _quick_stats_fragment()
 
             # Window timer — wrapped in a 1s fragment so it ticks live
@@ -2025,9 +2003,11 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                 secs = _seconds_to_next_window()
                 mins, s = divmod(secs, 60)
                 st.metric(
-                    "Next Window", f"{mins}:{s:02d}",
-                    help="Countdown to the next 5-minute Flink TUMBLE window boundary (UTC-aligned).",
+                    "Next Window",
+                    f"{mins}:{s:02d}",
+                    help="Countdown to the next 1-minute Flink TUMBLE window boundary (UTC-aligned).",
                 )
+
             _window_timer_fragment()
 
         st.divider()
@@ -2051,15 +2031,29 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
 
         # Check if all agent statements are already active
         agent_all_active = False
+        deploy_dispatch_active = False
         creds = _load_flink_credentials()
         _phases: list = []
         if creds is not None:
+            # First, check the DEPLOY-created canonical dispatch statement. If a
+            # `uv run deploy` already stood up the pipeline, its dispatch-insert
+            # is RUNNING under a canonical name (not dashboard-*). In that case
+            # the shared catalog objects (tool/agent/table) already exist and
+            # are in use — the dashboard must NOT offer to recreate them, which
+            # would DROP objects the deployed pipeline depends on.
+            deploy_phase = _check_flink_statement_exists(
+                creds, DEPLOY_DISPATCH_STATEMENT
+            )
+            deploy_dispatch_active = deploy_phase in ("RUNNING", "COMPLETED")
+
             for stmt_name, _ in AGENT_SQL_STEPS:
                 _phases.append(_check_flink_statement_exists(creds, stmt_name))
             # The INSERT (last step) is what matters — tool/agent FAILED with
             # "already exists" is benign if the INSERT is RUNNING.
             insert_phase = _phases[-1] if _phases else None
-            agent_all_active = insert_phase in ("RUNNING", "COMPLETED")
+            agent_all_active = (
+                insert_phase in ("RUNNING", "COMPLETED") or deploy_dispatch_active
+            )
 
         # Check for real failures (INSERT failed = problem)
         agent_any_failed = False
@@ -2067,11 +2061,21 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
             agent_any_failed = any(p == "FAILED" for p in _phases)
 
         if agent_all_active:
-            st.success("Agent dispatch active — all Flink statements running.")
+            if deploy_dispatch_active:
+                st.success(
+                    "Agent dispatch active (provisioned by `uv run deploy`) — "
+                    "the shared Flink tool/agent/dispatch statements are running."
+                )
+            else:
+                st.success("Agent dispatch active — all Flink statements running.")
         else:
             if agent_any_failed:
-                failed_stmts = [n for (n, _), p in zip(AGENT_SQL_STEPS, _phases) if p == "FAILED"]
-                st.warning(f"Agent dispatch has FAILED statements: {', '.join(failed_stmts)}. Click below to retry.")
+                failed_stmts = [
+                    n for (n, _), p in zip(AGENT_SQL_STEPS, _phases) if p == "FAILED"
+                ]
+                st.warning(
+                    f"Agent dispatch has FAILED statements: {', '.join(failed_stmts)}. Click below to retry."
+                )
 
             if "agent_dispatch_running" not in st.session_state:
                 st.session_state.agent_dispatch_running = False
@@ -2087,7 +2091,9 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                 def _agent_dispatch_progress():
                     mb = st.session_state.get("agent_dispatch_mailbox") or {}
                     if mb.get("done"):
-                        st.session_state.agent_dispatch_results = list(mb.get("results", []))
+                        st.session_state.agent_dispatch_results = list(
+                            mb.get("results", [])
+                        )
                         st.session_state.agent_dispatch_running = False
                         st.session_state.pop("agent_dispatch_mailbox", None)
                         st.rerun()
@@ -2097,6 +2103,7 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                     st.markdown(
                         f":green[Submitting Flink statements... ({completed}/{total})]"
                     )
+
                 _agent_dispatch_progress()
             elif st.button(
                 "Run Agent Dispatch",
@@ -2105,7 +2112,9 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                 disabled=st.session_state.get("agent_dispatch_running", False),
             ):
                 if creds is None:
-                    st.error("Cannot load Flink credentials from terraform/core/terraform.tfstate")
+                    st.error(
+                        "Cannot load Flink credentials from terraform/core/terraform.tfstate"
+                    )
                 else:
                     # Run the long-running submission off the Streamlit
                     # script thread so the UI stays responsive. Streamlit
@@ -2114,6 +2123,7 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                     # context to the worker thread so its mutations to
                     # st.session_state are picked up by polling fragments.
                     import threading as _threading
+
                     try:
                         from streamlit.runtime.scriptrunner import add_script_run_ctx
                     except ImportError:
@@ -2146,12 +2156,17 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                         object only just-in-time before its CREATE.
                         Stop on first error so we never half-apply.
                         """
-                        def _drop_catalog_object(step_name: str, drop_sql: str) -> Optional[str]:
+
+                        def _drop_catalog_object(
+                            step_name: str, drop_sql: str
+                        ) -> Optional[str]:
                             """Submit a just-in-time DROP, then delete+await its
                             statement record. Returns an error string on a failed
                             DROP submission, or None on success. (No _time.sleep —
                             ; relies on _wait_for_statement_deleted.)"""
-                            drop_resp = _submit_flink_sql(_creds, f"{step_name}-drop", drop_sql)
+                            drop_resp = _submit_flink_sql(
+                                _creds, f"{step_name}-drop", drop_sql
+                            )
                             if "error" in drop_resp:
                                 return drop_resp["error"]
                             _delete_flink_statement(_creds, f"{step_name}-drop")
@@ -2162,7 +2177,13 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                             for stmt_name, sql in AGENT_SQL_STEPS:
                                 phase = _check_flink_statement_exists(_creds, stmt_name)
                                 if phase in ("RUNNING", "COMPLETED"):
-                                    mailbox["results"].append({"name": stmt_name, "status": "skipped", "detail": f"Already {phase}"})
+                                    mailbox["results"].append(
+                                        {
+                                            "name": stmt_name,
+                                            "status": "skipped",
+                                            "detail": f"Already {phase}",
+                                        }
+                                    )
                                     continue
                                 if phase in ("FAILED", "STOPPED", "DEGRADED"):
                                     _delete_flink_statement(_creds, stmt_name)
@@ -2186,16 +2207,30 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                                 drop_err = None
                                 if "CREATE TABLE" in sql and "completed_actions" in sql:
                                     did_drop = True
-                                    drop_err = _drop_catalog_object(stmt_name, "DROP TABLE IF EXISTS completed_actions")
+                                    drop_err = _drop_catalog_object(
+                                        stmt_name,
+                                        "DROP TABLE IF EXISTS completed_actions",
+                                    )
                                 elif "CREATE AGENT" in sql:
                                     did_drop = True
-                                    drop_err = _drop_catalog_object(stmt_name, "DROP AGENT IF EXISTS boat_dispatch_agent")
+                                    drop_err = _drop_catalog_object(
+                                        stmt_name,
+                                        "DROP AGENT IF EXISTS boat_dispatch_agent",
+                                    )
                                 elif "CREATE TOOL" in sql:
                                     did_drop = True
-                                    drop_err = _drop_catalog_object(stmt_name, "DROP TOOL IF EXISTS mongodb_fleet")
+                                    drop_err = _drop_catalog_object(
+                                        stmt_name, "DROP TOOL IF EXISTS mongodb_fleet"
+                                    )
 
                                 if drop_err is not None:
-                                    mailbox["results"].append({"name": stmt_name, "status": "error", "detail": f"DROP failed: {drop_err}"})
+                                    mailbox["results"].append(
+                                        {
+                                            "name": stmt_name,
+                                            "status": "error",
+                                            "detail": f"DROP failed: {drop_err}",
+                                        }
+                                    )
                                     break
 
                                 resp = _submit_flink_sql(_creds, stmt_name, sql)
@@ -2205,16 +2240,46 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                                         # the CREATE did not recreate it, so the
                                         # catalog is half-applied. Stop rather than
                                         # INSERT into a missing table/agent/tool.
-                                        mailbox["results"].append({"name": stmt_name, "status": "error", "detail": "Dropped but CREATE returned 409 (half-applied) — re-run dispatch"})
+                                        mailbox["results"].append(
+                                            {
+                                                "name": stmt_name,
+                                                "status": "error",
+                                                "detail": "Dropped but CREATE returned 409 (half-applied) — re-run dispatch",
+                                            }
+                                        )
                                         break
-                                    mailbox["results"].append({"name": stmt_name, "status": "skipped", "detail": "Already exists (409)"})
+                                    mailbox["results"].append(
+                                        {
+                                            "name": stmt_name,
+                                            "status": "skipped",
+                                            "detail": "Already exists (409)",
+                                        }
+                                    )
                                 elif "error" in resp:
-                                    mailbox["results"].append({"name": stmt_name, "status": "error", "detail": resp["error"]})
+                                    mailbox["results"].append(
+                                        {
+                                            "name": stmt_name,
+                                            "status": "error",
+                                            "detail": resp["error"],
+                                        }
+                                    )
                                     break
                                 else:
-                                    mailbox["results"].append({"name": stmt_name, "status": "submitted", "detail": "OK"})
+                                    mailbox["results"].append(
+                                        {
+                                            "name": stmt_name,
+                                            "status": "submitted",
+                                            "detail": "OK",
+                                        }
+                                    )
                         except Exception as exc:
-                            mailbox["results"].append({"name": "_runtime", "status": "error", "detail": str(exc)})
+                            mailbox["results"].append(
+                                {
+                                    "name": "_runtime",
+                                    "status": "error",
+                                    "detail": str(exc),
+                                }
+                            )
                         finally:
                             mailbox["done"] = True
 
@@ -2264,6 +2329,7 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
         # scripts.common.datagen_helpers.BATCH_COUNTER_RELATIVE so the
         # dashboard, pipeline_reset, and destroy stay in sync.
         from scripts.common.datagen_helpers import BATCH_COUNTER_RELATIVE
+
         root = _get_project_root() or "."
         batch_counter_file = Path(root).joinpath(*BATCH_COUNTER_RELATIVE)
         current_batch = 0
@@ -2298,7 +2364,9 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
             next_mult, next_zone = _surge_config[0]
 
         st.caption(f"Next: **{next_label}** — {next_mult}x surge in **{next_zone}**")
-        st.progress(min(current_batch, 10) / 10, text=f"{current_batch}/10 batches seeded")
+        st.progress(
+            min(current_batch, 10) / 10, text=f"{current_batch}/10 batches seeded"
+        )
 
         if st.session_state.datagen_running:
             # Live progress fragment: polls the subprocess every 1s without
@@ -2342,9 +2410,7 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                         try:
                             Path(pending_file).write_text(str(pending))
                         except OSError as exc:
-                            st.warning(
-                                f"Could not update batch counter: {exc}"
-                            )
+                            st.warning(f"Could not update batch counter: {exc}")
                     # invalidate the ride_requests count
                     # cache so the KPI tile reflects the new data.
                     st.session_state.pop("_ride_requests_count", None)
@@ -2356,6 +2422,7 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                     st.session_state.pop("_pending_batch_num", None)
                     st.session_state.pop("_pending_batch_counter_file", None)
                 st.rerun()
+
             _datagen_progress_fragment()
         else:
             if st.button("Seed Next Batch"):
@@ -2375,28 +2442,34 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                         "stderr": subprocess.DEVNULL,
                     }
                     if current_batch == 0:
-                        # First run: publish baseline, then batch_01.
-                        # Start baseline now; queue batch_01 to run after.
+                        # First run: publish the baseline only. ride_requests.jsonl
+                        # IS batch 1's data (generate_batch_data regenerates it from
+                        # batch 1), so also publishing batch_01.jsonl would send the
+                        # identical batch twice. Advance the counter to 1 so the next
+                        # click seeds batch_02.
                         baseline_file = data_dir / "ride_requests.jsonl"
-                        batch_file = data_dir / "batch_01.jsonl"
                         first_cmd = [
-                            sys.executable, "-m", "scripts.publish_data",
-                            "--data-file", str(baseline_file), "--force",
-                        ]
-                        next_cmd = [
-                            sys.executable, "-m", "scripts.publish_data",
-                            "--data-file", str(batch_file), "--force",
+                            sys.executable,
+                            "-m",
+                            "scripts.publish_data",
+                            "--data-file",
+                            str(baseline_file),
+                            "--force",
                         ]
                         p = subprocess.Popen(first_cmd, **popen_kwargs)
-                        st.session_state.datagen_queue = [(next_cmd, popen_kwargs)]
+                        st.session_state.datagen_queue = []
                         next_batch_num = 1
                     else:
                         # Subsequent batches
                         next_batch_num = current_batch + 1
                         batch_file = data_dir / f"batch_{next_batch_num:02d}.jsonl"
                         cmd = [
-                            sys.executable, "-m", "scripts.publish_data",
-                            "--data-file", str(batch_file), "--force",
+                            sys.executable,
+                            "-m",
+                            "scripts.publish_data",
+                            "--data-file",
+                            str(batch_file),
+                            "--force",
                         ]
                         p = subprocess.Popen(cmd, **popen_kwargs)
                         st.session_state.datagen_queue = []
@@ -2410,7 +2483,9 @@ def _render_sidebar(client: Optional[Any]) -> Dict[str, Any]:
                     # Store the pending batch number in session_state so
                     # the completion callback can commit it on success.
                     st.session_state["_pending_batch_num"] = next_batch_num
-                    st.session_state["_pending_batch_counter_file"] = str(batch_counter_file)
+                    st.session_state["_pending_batch_counter_file"] = str(
+                        batch_counter_file
+                    )
 
                     st.session_state.datagen_process = p
                     st.session_state.datagen_running = True
@@ -2467,8 +2542,9 @@ def _render_live_dispatch_map(client: Any) -> None:
     # land in that window (surges happen in bursts, user may open the dashboard
     # later), widen to the most recent N regardless of age so the map is never
     # silently empty when dispatch_log has data.
-    dispatches = _fetch_dispatches_for_map(client, recent_window_minutes=15,
-                                           fallback_limit=5)
+    dispatches = _fetch_dispatches_for_map(
+        client, recent_window_minutes=15, fallback_limit=5
+    )
     vessel_home = _fetch_vessel_home_zones(client)
     trips = _build_dispatch_trips(dispatches, vessel_home)
 
@@ -2657,8 +2733,13 @@ def _render_zone_traffic(data: List[dict]) -> None:
         st.info(EMPTY_STATE_MESSAGES["zone_traffic"])
         return
     if HAS_PLOTLY:
-        fig = px.line(df, x="window_start", y="request_count", color="zone",
-                      title="Ride Requests by Zone Over Time")
+        fig = px.line(
+            df,
+            x="window_start",
+            y="request_count",
+            color="zone",
+            title="Ride Requests by Zone Over Time",
+        )
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(12,17,23,0.6)",
@@ -2666,8 +2747,14 @@ def _render_zone_traffic(data: List[dict]) -> None:
             font_family="Euclid Circular A, sans-serif",
             title_font_color="#F0F4F8",
             legend_font_color="#C8D5DE",
-            xaxis=dict(gridcolor="rgba(255,255,255,0.04)", zerolinecolor="rgba(255,255,255,0.06)"),
-            yaxis=dict(gridcolor="rgba(255,255,255,0.04)", zerolinecolor="rgba(255,255,255,0.06)"),
+            xaxis=dict(
+                gridcolor="rgba(255,255,255,0.04)",
+                zerolinecolor="rgba(255,255,255,0.06)",
+            ),
+            yaxis=dict(
+                gridcolor="rgba(255,255,255,0.04)",
+                zerolinecolor="rgba(255,255,255,0.06)",
+            ),
         )
         st.plotly_chart(fig, width="stretch")
     else:
@@ -2691,8 +2778,13 @@ def _render_zone_heatmap(data: List[dict]) -> None:
         st.info(EMPTY_STATE_MESSAGES["zone_traffic"])
         return
     if HAS_PLOTLY:
-        fig = px.bar(df, x="zone", y=["request_count", "total_passengers", "total_revenue"],
-                     barmode="group", title="Zone Metrics Summary")
+        fig = px.bar(
+            df,
+            x="zone",
+            y=["request_count", "total_passengers", "total_revenue"],
+            barmode="group",
+            title="Zone Metrics Summary",
+        )
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(12,17,23,0.6)",
@@ -2700,8 +2792,14 @@ def _render_zone_heatmap(data: List[dict]) -> None:
             font_family="Euclid Circular A, sans-serif",
             title_font_color="#F0F4F8",
             legend_font_color="#C8D5DE",
-            xaxis=dict(gridcolor="rgba(255,255,255,0.04)", zerolinecolor="rgba(255,255,255,0.06)"),
-            yaxis=dict(gridcolor="rgba(255,255,255,0.04)", zerolinecolor="rgba(255,255,255,0.06)"),
+            xaxis=dict(
+                gridcolor="rgba(255,255,255,0.04)",
+                zerolinecolor="rgba(255,255,255,0.06)",
+            ),
+            yaxis=dict(
+                gridcolor="rgba(255,255,255,0.04)",
+                zerolinecolor="rgba(255,255,255,0.06)",
+            ),
         )
         st.plotly_chart(fig, width="stretch")
     else:
@@ -2747,9 +2845,7 @@ def _render_anomalies(data: List[dict]) -> None:
                         # chunks are operator-seeded but
                         # mutable (events.knowledge_base). A poisoned
                         # chunk could inject markdown.
-                        st.markdown(
-                            f"**Chunk {i}:** {html.escape(str(chunk))}"
-                        )
+                        st.markdown(f"**Chunk {i}:** {html.escape(str(chunk))}")
 
 
 def _render_dispatches(data: List[dict]) -> None:
@@ -2812,10 +2908,11 @@ def _render_knowledge_base(data: List[dict]) -> None:
         # response.
         col.markdown(
             f"""
-            <div style="border:1px solid #ddd;border-radius:8px;padding:12px;margin:4px 0;
+            <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(12,17,23,0.85);
+                        border-radius:8px;padding:12px;margin:4px 0;
                         border-left:4px solid {impact_color};">
-            <strong>{html.escape(str(card['event_name']))}</strong><br>
-            <span style="color:#666;">{html.escape(str(card['zone']))} — {html.escape(str(card['venue']))}</span><br>
+            <strong style="color:#F0F4F8;">{html.escape(str(card['event_name']))}</strong><br>
+            <span style="color:#C8D5DE;">{html.escape(str(card['zone']))} — {html.escape(str(card['venue']))}</span><br>
             <span>Attendance: {card['expected_attendance']:,}</span><br>
             <span style="color:{impact_color};font-weight:bold;">{html.escape(str(card['impact_level']).upper())} impact</span>
             &nbsp;|&nbsp; {html.escape(str(card['event_type']))}
@@ -2828,6 +2925,7 @@ def _render_knowledge_base(data: List[dict]) -> None:
 # ---------------------------------------------------------------------------
 # Main dashboard flow
 # ---------------------------------------------------------------------------
+
 
 def _run_dashboard() -> None:
     """Main Streamlit dashboard rendering function."""
@@ -2843,6 +2941,17 @@ def _run_dashboard() -> None:
 
     # Inject MongoDB dark theme
     st.markdown(MONGODB_THEME_CSS, unsafe_allow_html=True)
+
+    # Live "DB is alive" overlay: ops ticker + surge/dispatch banners driven by
+    # the SSE sidecar's Atlas change stream. Renders inside a 0-px component
+    # iframe that injects a fixed overlay into the parent document; degrades to
+    # an OFFLINE indicator if the sidecar is unreachable (spec REQ-E-020).
+    try:
+        import streamlit.components.v1 as _components
+
+        _components.html(_render_live_overlay(_live_sse_url()), height=0)
+    except Exception:
+        pass  # overlay is additive — never block the dashboard (INV-001)
 
     # Header with MongoDB + Confluent logos
     st.markdown(
@@ -2940,14 +3049,25 @@ def _run_dashboard() -> None:
     # interaction but never on a timer.
     auto_refresh = bool(filters.get("auto_refresh", True))
     refresh_s = int(filters.get("refresh_interval", 15)) if auto_refresh else None
-    map_refresh_s = min(2, refresh_s) if refresh_s is not None else None
 
-    @st.fragment(run_every=map_refresh_s)
-    def _map_fragment():
-        # Live dispatch map (above the architecture diagram so the boats are
-        # the first thing the user sees). Refreshes at ~2s for smooth
-        # TripsLayer animation.
-        _render_live_dispatch_map(client)
+    # The live dispatch map moved to the Mission Control HUD (served by the
+    # SSE sidecar), where it animates continuously in the browser instead of
+    # re-mounting on every Streamlit rerun. This page is the analytics
+    # deep-dive; point presenters at the hero screen.
+    st.markdown(
+        f"""
+        <a href="{html.escape(_live_sse_url())}" target="_blank" rel="noopener"
+           style="display:flex;align-items:center;gap:12px;border:1px solid rgba(0,237,100,0.35);
+                  background:rgba(0,237,100,0.06);border-radius:12px;padding:12px 18px;
+                  margin:4px 0 12px 0;text-decoration:none;">
+            <span style="font-size:1.1rem;">🗺️</span>
+            <span style="color:#F0F4F8;font-weight:600;">Mission Control is the live webinar view</span>
+            <span style="color:#C8D5DE;">— animated dispatch map, surge banners and the
+                agent's reasoning, pushed in real time. Open {html.escape(_live_sse_url())}</span>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
 
     @st.fragment(run_every=refresh_s)
     def _counts_and_charts_fragment():
@@ -2977,8 +3097,6 @@ def _run_dashboard() -> None:
             kb_data = _fetch_knowledge_base(client)
             _render_knowledge_base(kb_data)
 
-    _map_fragment()
-    st.divider()
     _counts_and_charts_fragment()
     st.divider()
     _anomalies_fragment()
@@ -2987,8 +3105,165 @@ def _run_dashboard() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Live "DB is alive" overlay (Path B) — no-build HTML/JS SSE client
+# ---------------------------------------------------------------------------
+
+
+def _live_sse_url() -> str:
+    """Resolve the SSE sidecar base URL (env LIVE_SSE_URL, default 8502)."""
+    return os.environ.get("LIVE_SSE_URL", "http://localhost:8502")
+
+
+def _render_live_overlay(sse_url: str) -> str:
+    """Return an HTML/JS island that streams live change events from the SSE
+    sidecar and renders an ops ticker, surge/dispatch banners, and a
+    LIVE/RECONNECTING/OFFLINE indicator.
+
+    Embedded via st.components.v1.html, the script runs inside a sandbox
+    iframe; it injects its DOM + styles into the PARENT document so the fixed
+    ticker/banner span the whole app rather than a 0-px iframe. It opens the
+    EventSource in the browser, so the dashboard renders fine even when the
+    sidecar is down (the client flips to OFFLINE and keeps retrying). Styled
+    with the MongoDB theme (REQ-E-014).
+    """
+    stream_url = f"{sse_url.rstrip('/')}/api/stream"
+    css = """
+  #live-ticker-wrap{position:fixed;left:0;right:0;bottom:0;z-index:2147483000;
+    display:flex;align-items:center;gap:14px;padding:6px 14px;
+    background:linear-gradient(90deg,#060A0F 0%,#0B1620 100%);
+    border-top:1px solid rgba(0,237,100,0.35);
+    font-size:12px;color:#C6D3DD;font-family:'JetBrains Mono',monospace;}
+  #live-indicator{font-weight:700;letter-spacing:.5px;white-space:nowrap;}
+  /* !important: the dashboard theme sets `p,span,label,... {color:var(--mdb-text-secondary)!important}`.
+     The indicator is a <span>, so without !important that grey rule wins the
+     cascade (it beats our higher-specificity rule purely on !important) and the
+     LIVE/RECONNECTING/OFFLINE state colors never show. */
+  /* When LIVE, the dot gently breathes so the overlay looks alive BETWEEN
+     window closes (the pipeline is windowed; nothing lands in Mongo between
+     windows, so without this the overlay looks frozen even when healthy).
+     Driven purely by CSS + the existing SSE keepalive ping — no new data. */
+  #live-indicator.live{color:#00ED64 !important;animation:livepulse 2s ease-in-out infinite;}
+  #live-indicator.reconnecting{color:#fbbf24 !important;}
+  #live-indicator.offline{color:#f43f5e !important;}
+  #live-hint{color:#5a6b78;font-style:italic;white-space:nowrap;}
+  @keyframes livepulse{0%,100%{opacity:1;}50%{opacity:0.45;}}
+  #live-ticker{flex:1;overflow:hidden;white-space:nowrap;height:18px;}
+  #live-ticker .row{animation:opin .35s ease-out;color:#8FA3B0;}
+  #live-ticker .row b{color:#00ED64;}
+  #live-counters{display:flex;gap:12px;white-space:nowrap;}
+  #live-counters .ct b{color:#00ED64;}
+  #live-counters .ct.total b{color:#fff;}
+  #live-banner{position:fixed;top:12%;left:0;right:0;z-index:2147483000;
+    display:flex;justify-content:center;pointer-events:none;}
+  #live-banner .b{padding:14px 26px;border-radius:10px;font-weight:800;
+    font-size:20px;letter-spacing:.5px;animation:bannerin .3s ease-out;
+    box-shadow:0 8px 40px rgba(0,0,0,.5);}
+  #live-banner .b.surge{background:linear-gradient(90deg,#7f1d2e,#f43f5e);color:#fff;}
+  #live-banner .b.dispatch{background:linear-gradient(90deg,#064e3b,#00ED64);color:#04120b;}
+  @keyframes opin{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+  @keyframes bannerin{from{opacity:0;transform:translateY(-10px) scale(.96);}to{opacity:1;transform:none;}}
+"""
+    shell = """
+    <div id="live-banner"></div>
+    <div id="live-ticker-wrap">
+      <span id="live-indicator" class="offline">● OFFLINE</span>
+      <div id="live-ticker"></div>
+      <span id="live-counters">
+        <span class="ct">dispatch <b id="ct-dispatch">0</b></span>
+        <span class="ct">anomaly <b id="ct-anomaly">0</b></span>
+        <span class="ct">traffic <b id="ct-traffic">0</b></span>
+        <span class="ct total">total <b id="ct-total">0</b></span>
+      </span>
+    </div>
+"""
+    return (
+        """
+<script>
+(function(){
+  var STREAM = "%STREAM_URL%";
+  // Mount into the PARENT document so position:fixed spans the whole app.
+  var doc = window.parent && window.parent.document ? window.parent.document : document;
+  var root = doc.getElementById('live-overlay-root');
+  if(!root){
+    var style = doc.createElement('style'); style.textContent = %CSS%;
+    doc.head.appendChild(style);
+    root = doc.createElement('div'); root.id='live-overlay-root';
+    root.innerHTML = %SHELL%;
+    doc.body.appendChild(root);
+  }
+  var counts = {dispatch:0, anomaly:0, traffic:0, total:0};
+  function el(id){ return doc.getElementById(id); }
+  function setState(cls, label){ var i=el('live-indicator'); if(i){i.className=cls; i.textContent='● '+label;} }
+  function bump(id){ var e=el(id); if(e) e.textContent=counts[id.replace('ct-','')]; }
+  function pushRow(op, coll, zone){
+    var t=el('live-ticker'); if(!t) return;
+    // Build with textContent (never innerHTML) — op/coll/zone originate from
+    // Kafka/Mongo docs and must not be interpreted as HTML (DOM-XSS safe).
+    var row=doc.createElement('div'); row.className='row';
+    row.appendChild(doc.createTextNode('✓ '+op+' '));
+    var b=doc.createElement('b'); b.textContent=coll; row.appendChild(b);
+    row.appendChild(doc.createTextNode(' · '+(zone||'')));
+    t.innerHTML=''; t.appendChild(row);
+  }
+  function showBanner(kind, text){
+    var b=el('live-banner'); if(!b) return;
+    b.innerHTML='';
+    var d2=doc.createElement('div'); d2.className='b '+kind; d2.textContent=text;
+    b.appendChild(d2);
+    setTimeout(function(){ if(el('live-banner')) el('live-banner').innerHTML=''; }, 8000);
+  }
+  function zoneOf(d){ return (d && (d.zone || d.pickup_zone || d.surge_zone)) || ''; }
+  var lastEventTs = 0;
+  function showHint(){
+    // Between window closes nothing lands in Mongo, so the ticker would sit
+    // empty and look frozen. On the SSE keepalive ping, if no real change has
+    // arrived recently, show a subtle "listening" hint so the overlay reads as
+    // alive. A real `change` event overwrites it immediately.
+    var t=el('live-ticker'); if(!t) return;
+    if(Date.now() - lastEventTs < 8000) return;  // a real event is fresh; don't clobber
+    t.innerHTML='';
+    var h=doc.createElement('span'); h.id='live-hint';
+    h.textContent='listening for surges…';
+    t.appendChild(h);
+  }
+  function connect(){
+    var es;
+    try { es = new EventSource(STREAM); }
+    catch(e){ setState('offline','OFFLINE'); return; }
+    es.addEventListener('hello', function(){ setState('live','LIVE'); showHint(); });
+    es.addEventListener('ping', function(){ setState('live','LIVE'); showHint(); });
+    es.addEventListener('change', function(ev){
+      setState('live','LIVE');
+      var d; try{ d=JSON.parse(ev.data); }catch(e){ return; }
+      lastEventTs = Date.now();
+      var coll=d.collection||'', op=d.operationType||'insert', zone=zoneOf(d.doc);
+      counts.total++;
+      if(coll==='fleet.dispatch_log'){ counts.dispatch++; bump('ct-dispatch');
+        showBanner('dispatch','🚤 AGENT DISPATCHING — '+(zone||'FLEET').toUpperCase()); }
+      else if(coll==='analytics.zone_anomalies'){ counts.anomaly++; bump('ct-anomaly');
+        showBanner('surge','⚠ SURGE DETECTED — '+(zone||'ZONE').toUpperCase()); }
+      else if(coll==='analytics.zone_traffic'){ counts.traffic++; bump('ct-traffic'); }
+      bump('ct-total');
+      pushRow(op, coll, zone);
+    });
+    es.onerror = function(){
+      setState('reconnecting','RECONNECTING');
+      setTimeout(function(){ if(es.readyState===2){ setState('offline','OFFLINE'); connect(); } }, 4000);
+    };
+  }
+  connect();
+})();
+</script>
+""".replace("%STREAM_URL%", stream_url)
+        .replace("%CSS%", json.dumps(css))
+        .replace("%SHELL%", json.dumps(shell))
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def _find_free_port(start: int, limit: int = 20) -> int:
     """Return `start` if it is free, else the next free TCP port above it.
@@ -3052,10 +3327,15 @@ def main() -> None:
 
     script_path = Path(__file__).resolve()
     cmd = [
-        sys.executable, "-m", "streamlit", "run",
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
         str(script_path),
-        "--server.port", str(port),
-        "--server.headless", "true",
+        "--server.port",
+        str(port),
+        "--server.headless",
+        "true",
     ]
 
     print(f"Launching Dashboard on port {port}...")

@@ -20,7 +20,6 @@ from unittest import mock
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -149,6 +148,7 @@ def test_TC_CRF_029_build_time_filter_passes_datetime_not_int():
     for time-range queries; epoch_millis int $gte does not match BSON Date
     storage (ASP applies $toDate in pipelines)."""
     from datetime import datetime, timezone
+
     from scripts.dashboard import _build_time_filter
 
     cutoff = datetime(2026, 5, 25, 12, 0, 0, tzinfo=timezone.utc)
@@ -162,6 +162,7 @@ def test_TC_CRF_029b_fetch_zone_traffic_queries_with_datetime():
     """REQ-CRF-029: _fetch_zone_traffic must NOT convert datetime to epoch
     millis before querying MongoDB."""
     from datetime import datetime, timezone
+
     from scripts.dashboard import _fetch_zone_traffic
 
     stub = _CapturingCollection(return_docs=[])
@@ -182,6 +183,7 @@ def test_TC_CRF_029b_fetch_zone_traffic_queries_with_datetime():
 def test_TC_CRF_029c_fetch_anomalies_queries_with_datetime():
     """REQ-CRF-029: _fetch_anomalies must pass datetime through."""
     from datetime import datetime, timezone
+
     from scripts.dashboard import _fetch_anomalies
 
     stub = _CapturingCollection(return_docs=[])
@@ -455,10 +457,10 @@ def test_TC_CRF_S5_save_terraform_credentials_handles_value_error():
 def test_TC_CRF_009_save_env_many_rejects_newlines():
     """REQ-CRF-009: _save_env_many must refuse values containing \\n or \\r
     to prevent .env corruption."""
-    from scripts.deploy import _save_env_many
-
     # Patch _env_path to a tmp file so we don't touch the real .env.
     import tempfile
+
+    from scripts.deploy import _save_env_many
     with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
         tmp_path = Path(f.name)
     try:
@@ -1033,6 +1035,7 @@ def test_TC_CRF_037_cli_output_log_writes_are_locked():
     line and verify no line is torn (interleaved with another)."""
     import tempfile
     import threading as _threading
+
     from scripts.common import cli_output
 
     # Initialize with a temp log dir so we can read back the session log.
@@ -1112,6 +1115,7 @@ def test_TC_CRF_030_run_agent_dispatch_button_disabled_when_running():
     # Heuristic: the Run Agent Dispatch button must have a `disabled=`
     # kwarg, and that kwarg must reference the session_state flag.
     import re
+
     # Find every `st.button("Run Agent Dispatch", ...)` call
     pattern = re.compile(
         r'st\.button\(\s*"Run Agent Dispatch"([^)]*)\)',
@@ -1257,10 +1261,10 @@ def test_TC_CRF_035_health_json_schema_is_stable():
     must have a stable per-entry shape — every entry must contain the SAME
     KEY SET, with None defaults for inapplicable fields. Both ok and error
     branches across all 4 component-check functions must match."""
-    from scripts import health
-
     # Force a Flink fail/auth branch
     import urllib.error
+
+    from scripts import health
     outputs_flink = {
         "app_manager_flink_api_key":     {"value": "k"},
         "app_manager_flink_api_secret":  {"value": "s"},
@@ -1537,8 +1541,9 @@ def test_TC_CRF_026_delete_and_wait_raises_on_timeout():
     must raise TimeoutError on timeout. Verified by behavior: mock the
     HTTP poll to always return DELETING, call with tiny timeout, expect
     TimeoutError."""
-    from scripts.common.flink_rest import FlinkRestClient
     import urllib.error
+
+    from scripts.common.flink_rest import FlinkRestClient
 
     client = FlinkRestClient(
         rest_endpoint="https://x",
@@ -1579,6 +1584,7 @@ def test_TC_CRF_016_asp_restart_surfaces_failed_but_does_not_treat_as_success():
     code path: a FAILED entry must produce a warning log line.
     """
     import logging
+
     from scripts.common import asp_restart
 
     with mock.patch.object(asp_restart, "_send_action", return_value=(True, 200, "")), \
@@ -1631,6 +1637,7 @@ def test_TC_CRF_016c_asp_restart_does_not_block_on_failed_processor():
     The function must return in well under 3 seconds (the timeout).
     """
     import time as _t
+
     from scripts.common import asp_restart
 
     list_calls = {"n": 0}
@@ -1754,6 +1761,7 @@ def test_TC_CRF_020_dispatch_log_validator_requires_window_time():
     # Look for the specific tuple ("fleet", "dispatch_log") followed by
     # required containing window_time.
     import re
+
     # Cheap and robust enough: find the dispatch_log validator block,
     # assert window_time appears in its required.
     m = re.search(
@@ -1873,7 +1881,7 @@ def test_TC_CRF_003_pipeline_reset_excludes_ctas_topics():
     pre-creating these topics blocks the CTAS DDL via phantom raw-byte
     catalog tables. pipeline_reset was re-introducing the exact bug.
     """
-    from scripts.pipeline_reset import PIPELINE_TOPICS, FLINK_CATALOG_TABLES
+    from scripts.pipeline_reset import FLINK_CATALOG_TABLES, PIPELINE_TOPICS
 
     for ctas_managed in ("anomalies_enriched", "completed_actions"):
         assert ctas_managed not in PIPELINE_TOPICS, (
@@ -1898,6 +1906,7 @@ def test_TC_CRF_029d_get_collection_counts_uses_datetime():
     """REQ-CRF-029: _get_collection_counts time-filter branch must use
     datetime, not epoch millis."""
     from datetime import datetime, timezone
+
     from scripts.dashboard import _get_collection_counts
 
     zt = _CapturingCollection(return_docs=[])

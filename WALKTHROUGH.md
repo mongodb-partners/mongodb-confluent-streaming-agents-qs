@@ -4,9 +4,9 @@ This walkthrough guides you through the full streaming agents pipeline: real-tim
 
 ### What This Demo Showcases
 
-1. **Flink MongoDB Sinks:** Zone traffic aggregates and enriched anomalies flow from Flink into Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`), enabling real-time dashboards and historical analysis.
-2. **Atlas Stream Processing (ASP):** Five ASP processors handle event ingestion, embedding generation, dispatch log capture, zone traffic ingestion, and anomaly ingestion, all running natively on Atlas.
-3. **Voyage AI Embeddings:** Events are embedded using MongoDB's Atlas-hosted Voyage AI endpoint (`ai.mongodb.com`) via both ASP (document embedding) and Flink (query embedding), producing aligned 1024-dimension vectors.
+1. **Flink MongoDB Sinks:** Zone traffic aggregates and detected anomalies flow from Flink through Kafka sink topics and ASP into Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`), powering Mission Control and historical analysis.
+2. **Atlas Stream Processing (ASP):** Five ASP processors handle event publication to Kafka, dispatch log capture, zone traffic ingestion, anomaly ingestion, and RAG-enrichment merge, all running natively on Atlas.
+3. **Voyage AI Embeddings:** Events are embedded using MongoDB's Atlas-hosted Voyage AI endpoint (`ai.mongodb.com`) via both a Python seeding step at deploy time (document embedding) and Flink `ML_PREDICT` (query embedding), producing aligned 1024-dimension vectors.
 4. **Enhanced Vector Search:** The knowledge base uses an enriched schema with structured metadata (zone, event type, impact level, attendance) for pre-filtered vector search.
 
 ## Prerequisites
@@ -61,22 +61,28 @@ The deploy script handles the complete setup in one pass:
 3. **Credentials:** Kafka and Schema Registry credentials are saved to `.env` for CLI tools
 4. **Atlas Stream Processing** is provisioned automatically after Terraform completes:
    - Creates an ASP stream processing instance (SP10)
-   - Registers 5 connection entries (Kafka, Atlas cluster, Voyage AI, two DLQ connections)
+   - Registers connection entries (Kafka, Atlas cluster, Voyage AI, two DLQ connections, Schema Registry)
    - Pre-creates required Kafka topics (`event_documents`, `completed_actions`, `zone_traffic_sink`, `anomalies_sink`)
-   - Starts 5 stream processors: `event_knowledge_base_population`,
-     `event_publication_to_kafka`, `dispatch_log_ingestion`,
-     `zone_traffic_ingestion`, `anomalies_ingestion`
+   - Starts 5 stream processors: `event_publication_to_kafka`,
+     `dispatch_log_ingestion`, `zone_traffic_ingestion`, `anomalies_ingestion`,
+     `anomalies_enriched_ingestion` (merges the LLM anomaly explanation and
+     Vector Search evidence chunks onto anomaly documents as they arrive)
    - Seeds 10 events into `events.calendar`
+   - **Populates the knowledge base in Python:** each seeded event is embedded
+     via the Voyage AI endpoint and upserted into `events.knowledge_base` by
+     `populate_knowledge_base()` in `scripts/asp_setup.py`. (This replaces the
+     former `event_knowledge_base_population` ASP processor, whose `$https`
+     call to the Voyage endpoint fails with HTTP 400.)
 5. **Flink streaming statements:** 7 statements are created via the Flink REST API:
    - `anomalies-enriched-ctas` (DDL): Creates the `anomalies_enriched` table
    - `completed-actions-ctas` (DDL): Creates the `completed_actions` table
    - `zone-traffic-sink-insert`: Sinks windowed traffic to MongoDB
    - `anomaly-detection-insert`: Runs `ML_DETECT_ANOMALIES` anomaly detection
    - `anomalies-enriched-insert`: RAG enrichment pipeline (embedding → vector search → LLM)
-   - `anomalies-sink-insert`: Sinks enriched anomalies to MongoDB
+   - `anomalies-sink-insert`: Sinks detected anomalies to MongoDB (reads anomalies_per_zone directly)
    - `dispatch-insert`: Agent dispatch (reads directly from anomalies_per_zone)
 6. **Initial data:** Pre-generated ride data is published to bootstrap the pipeline
-7. **Dashboard:** The Streamlit dashboard launches automatically
+7. **Mission Control:** The real-time Mission Control HUD launches automatically at http://localhost:8502 and opens in your browser (see [Watch it live in Mission Control](#10-watch-it-live-in-mission-control))
 
 > **Manual fallback:** If ASP setup fails or you need to run it separately:
 > ```bash
@@ -117,7 +123,7 @@ use analytics
 db.zone_traffic.find().sort({ window_start: -1 }).limit(5)
 ```
 
-You should see 5-minute windowed aggregates with `zone`, `request_count`, `total_passengers`, and `total_revenue` fields.
+You should see 1-minute windowed aggregates with `zone`, `request_count`, `total_passengers`, and `total_revenue` fields.
 
 ### 2. Visualize anomaly detection
 
@@ -127,13 +133,16 @@ In the [Flink UI](https://confluen.cloud/go/flink), select your environment and 
 SELECT * FROM anomalies_per_zone;
 ```
 
-The deployment continuously detects anomalies using `ML_DETECT_ANOMALIES` across 5-minute tumbling windows and writes results to `anomalies_per_zone`. You should see anomalies detected in the `French Quarter` zone after about 5 minutes of data generation.
+The deployment continuously detects anomalies using `ML_DETECT_ANOMALIES` across 1-minute tumbling windows and writes results to `anomalies_per_zone`. The model needs at least 15 one-minute windows of history per zone before it emits anomalies; the pre-generated data published during deploy provides that history, so you should see anomalies detected in the `French Quarter` zone within a minute or two of the DML statements reaching RUNNING.
 
 ### 3. Verify ASP pipelines are processing events
 
-The ASP setup seeded 10 events into `events.calendar`. The five ASP processors handle them automatically (`event_knowledge_base_population`, `event_publication_to_kafka`, `dispatch_log_ingestion`, `zone_traffic_ingestion`, `anomalies_ingestion`):
+The ASP setup seeded 10 events into `events.calendar`. The five ASP processors handle streaming data automatically (`event_publication_to_kafka`, `dispatch_log_ingestion`, `zone_traffic_ingestion`, `anomalies_ingestion`, `anomalies_enriched_ingestion`):
 
-**`event_knowledge_base_population` (Event Knowledge Base Population):**
+**Knowledge base (seeded in Python during deploy):**
+
+The knowledge base is populated at deploy time: `populate_knowledge_base()` embeds each seeded event via the Voyage AI endpoint and writes it to `events.knowledge_base`. Verify the documents carry embeddings:
+
 ```javascript
 // Check that events have been embedded and stored with Voyage AI vectors
 use events
@@ -160,7 +169,7 @@ Verify the Flink Voyage AI integration:
 SELECT * FROM TABLE(ML_PREDICT('voyage_query_embedding', 'test embedding'));
 ```
 
-This should return a 1024-dimension float array from the `voyage-4` model via `ai.mongodb.com`. The dimensions match the ASP-embedded documents in `events.knowledge_base`, ensuring vector search alignment.
+This should return a 1024-dimension float array from the `voyage-4` model via `ai.mongodb.com`. The dimensions match the Python-seeded documents in `events.knowledge_base`, ensuring vector search alignment.
 
 ### 5. Enrich anomalies with context using enhanced vector search
 
@@ -179,7 +188,7 @@ The enrichment pipeline:
 
 > **Note:** The deploy script now automatically creates the `dispatch-insert` statement, which reads directly from `anomalies_per_zone` and dispatches boats without waiting for RAG enrichment. This is the **parallel dispatch path**; it fires within seconds of anomaly detection.
 >
-> The dashboard button is available for manual triggering or re-creation if needed.
+> To exercise the loop on demand, run `uv run surge` (triggers a deterministic, window-aligned demand surge) and `uv run health` (verifies the whole pipeline).
 
 The agent tools and agent definition are created by Terraform (in the `agents` module). To inspect them in the Flink SQL workspace:
 
@@ -276,32 +285,58 @@ You should see dispatch records with `pickup_zone`, `dispatch_summary`, `dispatc
 
 > **Tip:** If `dispatch_log` remains empty while `completed_actions` has data in the Flink SQL shell, verify that the ASP `dispatch_log_ingestion` processor includes `schemaRegistry` in its `$source` stage.
 
-### 9. Check enriched anomalies in Atlas
+### 9. Check anomalies in Atlas
 
-The Flink anomaly sink continuously writes enriched anomalies to Atlas:
+The Flink anomaly sink (`anomalies-sink-insert`) continuously writes detected anomalies to Atlas. It reads directly from `anomalies_per_zone`, so anomalies reach Atlas even if the best-effort RAG enrichment statement fails:
 
 ```javascript
 use analytics
 db.zone_anomalies.find().sort({ window_time: -1 }).limit(5)
 ```
 
-Each document includes the `anomaly_reason` (LLM-generated explanation), top matching event chunks from vector search, and the original anomaly metrics.
+Each document lands with an `anomaly_reason` synthesized from the detection numbers (surge magnitude vs expected baseline). Shortly afterwards — when the best-effort RAG path (Step 5) completes — the `anomalies_enriched_ingestion` processor merges the LLM-generated explanation and the `top_chunk_*` vector-search evidence onto the same document, and Mission Control updates the anomaly card in place.
+
+### 10. Watch it live in Mission Control
+
+`uv run deploy` launches **Mission Control**, the real-time HUD, at http://localhost:8502 (served by `uv run live`, the SSE sidecar in `scripts/live_server.py`). The page is a pure projection of MongoDB Atlas change streams: nothing on screen is staged client-side; every pulse, banner, and boat is driven by a document landing in Atlas.
+
+What each area shows:
+
+- **Dispatch map:** an animated deck.gl map of New Orleans; dispatched boats follow the Mississippi River centerline to their target zone.
+- **Pipeline rail:** a sense → reason → act strip that pulses as traffic, anomalies, and dispatches land in Atlas.
+- **Left panel tabs:** **Surges** (live surge queue), **Traffic** (per-zone request chart over 1-minute windows), **Events** (knowledge base cards from `events.knowledge_base`).
+- **Agent reasoning panel:** why the surge was flagged (`anomaly_reason`), retrieved knowledge-base evidence chunks when the RAG enrichment path supplies them, and the resulting dispatch ACTION.
+- **Stage banners:** `SURGE DETECTED` and `AGENT DISPATCHING` flash as the loop progresses.
+- **KPI bar:** running counts along the bottom.
+- **Status badge:** `LIVE` / `RECONNECTING` / `OFFLINE` reflects the SSE connection; the browser reconnects automatically.
+
+A guided tour is built in: click the **? Tour** button (it auto-starts once per browser; append `?tour=0` to the URL to suppress it).
+
+**Run the demo loop:**
+
+```bash
+uv run surge
+```
+
+This publishes a concentrated, window-aligned batch of ride requests. Within about one 1-minute window you should see the SURGE DETECTED banner, then the reasoning panel populate, then the AGENT DISPATCHING banner and boats moving on the map.
+
+**Verify your deployment:** run `uv run health` for a full pipeline health report (Flink statements, ASP processors, Kafka topics, Atlas collections, MCP server). A Mission Control screenshot at http://localhost:8502 plus the `uv run health` output is your proof of a working deployment. If you closed the HUD, relaunch it with `uv run live`.
 
 ## Troubleshooting
 
 <details>
 <summary>Click to expand</summary>
 
-- **No anomalies detected?** Check that data generation is running (`uv run datagen`). The first anomaly should appear after both data generation and the anomaly detection pipeline have been running for about 5 minutes (one full tumbling window).
+- **No anomalies detected?** Check that data generation is running (`uv run datagen`). The model needs at least 15 one-minute windows of history per zone (~15 minutes of data); the pre-generated batch published during deploy provides that history, so the first anomaly should appear within 1-2 minutes of the detection statement running.
 
-- **Empty `events.knowledge_base`?** Verify the `event_knowledge_base_population` ASP processor is running:
-  1. Check the ASP instance status in Atlas UI under Stream Processing
+- **Empty `events.knowledge_base`?** The knowledge base is seeded in Python at deploy time (not by an ASP processor):
+  1. Verify `TF_VAR_voyage_api_key` in `.env` is set and valid
   2. Verify the `events.calendar` collection has the 10 seed events
-  3. Check `events.validation_dlq` for any failed documents
+  3. Re-run `uv run asp-setup` (it re-runs `populate_knowledge_base()`)
 
 - **Voyage AI embedding errors?** Verify your API key. Ensure Voyage AI is enabled on your Atlas project and the API key is valid.
 
-- **Vector search returns no results?** The Atlas Vector Search index on `events.knowledge_base` may still be building. Check the index status in Atlas UI; it should show "READY". Also verify that embedding dimensions match (both ASP and Flink should produce 1024-dimension vectors from `voyage-4`).
+- **Vector search returns no results?** The Atlas Vector Search index on `events.knowledge_base` may still be building. Check the index status in Atlas UI; it should show "READY". Also verify that embedding dimensions match (both the Python seeding step and Flink should produce 1024-dimension vectors from `voyage-4`).
 
 - **`analytics.zone_traffic` not populating?** The pipeline needs the `ride_requests` table to have data flowing. Verify data generation is running and check the Flink statement status in the SQL workspace.
 

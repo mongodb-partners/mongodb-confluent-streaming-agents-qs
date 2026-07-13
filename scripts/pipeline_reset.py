@@ -20,19 +20,21 @@ import subprocess
 import time
 import urllib.request
 import urllib.error
-import base64
+from scripts.common.http_auth import basic_auth_token
 from pathlib import Path
 
 try:
     # HAS_PYMONGO availability sentinel (Mongo access goes through
     # scripts.common.mongo.get_client). Kept (noqa) so the guard works.
     from pymongo import MongoClient  # noqa: F401
+
     HAS_PYMONGO = True
 except ImportError:
     HAS_PYMONGO = False
 
 try:
     from dotenv import dotenv_values
+
     HAS_DOTENV = True
 except ImportError:
     HAS_DOTENV = False
@@ -63,19 +65,18 @@ AGENT_BOOTSTRAP_STATEMENTS = list(_CANONICAL_AGENT_BOOTSTRAP)
 # the generic DML loop.
 _DISPATCH_STMT = "dispatch-insert"
 
-# All pipeline Kafka topics to delete and recreate.
+# All pipeline Kafka topics to delete and recreate — canonical source.
 #
-# anomalies_enriched and completed_actions are deliberately
-# excluded — they are CREATED BY their CTAS DDL. Pre-creating their Kafka
-# topics causes Confluent to auto-register a phantom raw-byte catalog table
-# that blocks the CTAS DDL. (See deploy.py:_ensure_flink_topics )
-PIPELINE_TOPICS = [
-    "ride_requests",
-    "windowed_traffic",
-    "anomalies_per_zone",
-    "zone_traffic_sink",
-    "anomalies_sink",
-]
+# anomalies_enriched and completed_actions are deliberately excluded (they are
+# CREATED BY their CTAS DDL; pre-creating their Kafka topics causes Confluent to
+# auto-register a phantom raw-byte catalog table that blocks the CTAS DDL).
+# RESET_TOPICS models exactly that (INPUT + STREAMING, no CTAS/event topics).
+from scripts.common.pipeline_topics import (
+    RESET_TOPICS as _RESET_TOPICS,
+    MONGODB_SINK_COLLECTIONS as _SINK_COLLECTIONS,
+)
+
+PIPELINE_TOPICS = list(_RESET_TOPICS)
 
 # Flink catalog tables/views to DROP before topic recreation.
 # When Kafka topics are recreated empty, Confluent Cloud auto-registers them in
@@ -86,7 +87,7 @@ PIPELINE_TOPICS = [
 # anomalies_enriched and completed_actions are excluded for
 # the same reason as PIPELINE_TOPICS above — the CTAS owns their lifecycle.
 FLINK_CATALOG_TABLES = [
-    "windowed_traffic",      # view (depends on ride_requests, drop first)
+    "windowed_traffic",  # view (depends on ride_requests, drop first)
     "ride_requests",
     "anomalies_per_zone",
     "zone_traffic_sink",
@@ -128,17 +129,14 @@ TERRAFORM_DDL_RESOURCES = [
 # became keyed, the stale -key subject would survive a reset and Flink
 # would reconstruct the table with a phantom `key VARBINARY` column.
 SCHEMA_SUBJECTS = [
-    f"{topic}{suffix}"
-    for topic in PIPELINE_TOPICS
-    for suffix in ("-value", "-key")
-] + ["anomalies_enriched-value"]  # CTAS-managed output
+    f"{topic}{suffix}" for topic in PIPELINE_TOPICS for suffix in ("-value", "-key")
+] + [
+    "anomalies_enriched-value"
+]  # CTAS-managed output
 
-# MongoDB sink collections populated by ASP processors (db, collection)
-MONGODB_SINK_COLLECTIONS = [
-    ("analytics", "zone_traffic"),
-    ("analytics", "zone_anomalies"),
-    ("fleet", "dispatch_log"),
-]
+# MongoDB sink collections populated by ASP processors (db, collection) —
+# canonical source (see scripts/common/pipeline_topics.py).
+MONGODB_SINK_COLLECTIONS = [tuple(c) for c in _SINK_COLLECTIONS]
 
 # ShadowTraffic Docker image used by datagen
 SHADOWTRAFFIC_IMAGE = "shadowtraffic/shadowtraffic:1.14.1"
@@ -150,6 +148,7 @@ def _get_terraform_outputs(root: Path) -> dict | None:
     delegates to the cached helper.
     """
     from scripts.common.terraform_outputs import get_core_outputs
+
     outputs = get_core_outputs(root)
     if not outputs:
         logger.warning("No core terraform state / outputs — cannot reset pipeline")
@@ -163,7 +162,9 @@ def _get_flink_credentials(outputs: dict) -> dict | None:
     flink_secret = outputs.get("app_manager_flink_api_secret", {}).get("value", "")
     org_id = outputs.get("confluent_organization_id", {}).get("value", "")
     env_id = outputs.get("confluent_environment_id", {}).get("value", "")
-    compute_pool_id = outputs.get("confluent_flink_compute_pool_id", {}).get("value", "")
+    compute_pool_id = outputs.get("confluent_flink_compute_pool_id", {}).get(
+        "value", ""
+    )
     principal_id = outputs.get("app_manager_service_account_id", {}).get("value", "")
     flink_endpoint = outputs.get("confluent_flink_rest_endpoint", {}).get("value", "")
     catalog = outputs.get("confluent_environment_display_name", {}).get("value", "")
@@ -172,7 +173,7 @@ def _get_flink_credentials(outputs: dict) -> dict | None:
     if not all([flink_key, flink_secret, org_id, env_id, flink_endpoint]):
         return None
 
-    cred_bytes = base64.b64encode(f"{flink_key}:{flink_secret}".encode()).decode()
+    cred_bytes = basic_auth_token(flink_key, flink_secret)
     return {
         "headers": {
             "Content-Type": "application/json",
@@ -185,16 +186,18 @@ def _get_flink_credentials(outputs: dict) -> dict | None:
         "database": database,
         # Raw fields for FlinkRestClient construction
         "rest_endpoint": flink_endpoint,
-        "api_key":       flink_key,
-        "api_secret":    flink_secret,
-        "org_id":        org_id,
-        "env_id":        env_id,
+        "api_key": flink_key,
+        "api_secret": flink_secret,
+        "org_id": org_id,
+        "env_id": env_id,
     }
 
 
 def _get_kafka_credentials(outputs: dict) -> dict | None:
     """Extract Kafka REST API credentials from terraform outputs."""
-    rest_endpoint = outputs.get("confluent_kafka_cluster_rest_endpoint", {}).get("value", "")
+    rest_endpoint = outputs.get("confluent_kafka_cluster_rest_endpoint", {}).get(
+        "value", ""
+    )
     cluster_id = outputs.get("confluent_kafka_cluster_id", {}).get("value", "")
     kafka_api_key = outputs.get("app_manager_kafka_api_key", {}).get("value", "")
     kafka_api_secret = outputs.get("app_manager_kafka_api_secret", {}).get("value", "")
@@ -202,7 +205,7 @@ def _get_kafka_credentials(outputs: dict) -> dict | None:
     if not all([rest_endpoint, cluster_id, kafka_api_key, kafka_api_secret]):
         return None
 
-    cred = base64.b64encode(f"{kafka_api_key}:{kafka_api_secret}".encode()).decode()
+    cred = basic_auth_token(kafka_api_key, kafka_api_secret)
     return {
         "rest_endpoint": rest_endpoint,
         "cluster_id": cluster_id,
@@ -230,7 +233,7 @@ def _get_schema_registry_credentials(root: Path) -> dict | None:
     if not all([sr_url, sr_key, sr_secret]):
         return None
 
-    cred = base64.b64encode(f"{sr_key}:{sr_secret}".encode()).decode()
+    cred = basic_auth_token(sr_key, sr_secret)
     return {
         "url": sr_url,
         "headers": {
@@ -263,7 +266,9 @@ def _delete_schema_subjects(root: Path) -> bool:
         for params in ["", "?permanent=true"]:
             try:
                 req = urllib.request.Request(
-                    f"{url}{params}", method="DELETE", headers=sr["headers"],
+                    f"{url}{params}",
+                    method="DELETE",
+                    headers=sr["headers"],
                 )
                 urllib.request.urlopen(req, timeout=15)
                 deleted_ok = True
@@ -298,6 +303,7 @@ def _drop_flink_catalog_tables(flink: dict) -> None:
     # Build a FlinkRestClient from the existing flink dict (constructed by
     # _get_flink_credentials).
     from scripts.common.flink_rest import FlinkRestClient
+
     client = FlinkRestClient(
         rest_endpoint=flink.get("rest_endpoint", ""),
         api_key=flink.get("api_key", ""),
@@ -329,6 +335,7 @@ def _drop_ctas_catalog_tables(flink: dict) -> None:
     failing with "Sink schema: [val: BYTES]". Mirrors deploy.py
     """
     from scripts.common.flink_rest import FlinkRestClient
+
     client = FlinkRestClient(
         rest_endpoint=flink.get("rest_endpoint", ""),
         api_key=flink.get("api_key", ""),
@@ -367,7 +374,11 @@ def _run_terraform_ddl_replace(root: Path) -> bool:
 
     try:
         result = subprocess.run(
-            cmd, cwd=agents_dir, capture_output=True, text=True, timeout=300,
+            cmd,
+            cwd=agents_dir,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if result.returncode == 0:
             logger.info("Terraform DDL statements recreated successfully")
@@ -384,11 +395,13 @@ def _stop_flink_statement(stmt_name: str, flink: dict) -> None:
     """Stop a Flink statement by setting stopped=true via PATCH."""
     url = f"{flink['base_url']}/{stmt_name}"
     try:
-        stop_body = json.dumps([
-            {"op": "replace", "path": "/spec/stopped", "value": True}
-        ]).encode()
+        stop_body = json.dumps(
+            [{"op": "replace", "path": "/spec/stopped", "value": True}]
+        ).encode()
         req = urllib.request.Request(
-            url, data=stop_body, method="PATCH",
+            url,
+            data=stop_body,
+            method="PATCH",
             headers={**flink["headers"], "Content-Type": "application/json"},
         )
         urllib.request.urlopen(req, timeout=15)
@@ -461,6 +474,7 @@ def _wait_for_kafka_topic_gone(topic: str, kafka: dict, timeout: int = 30) -> bo
     """
     url = f"{kafka['rest_endpoint']}/kafka/v3/clusters/{kafka['cluster_id']}/topics/{topic}"
     import time as _time
+
     deadline = _time.monotonic() + timeout
     while _time.monotonic() < deadline:
         try:
@@ -481,12 +495,16 @@ def _wait_for_kafka_topic_gone(topic: str, kafka: dict, timeout: int = 30) -> bo
 def _create_kafka_topic(topic: str, kafka: dict, num_partitions: int = 6) -> bool:
     """Create a Kafka topic via REST API v3 (POST)."""
     url = f"{kafka['rest_endpoint']}/kafka/v3/clusters/{kafka['cluster_id']}/topics"
-    body = json.dumps({
-        "topic_name": topic,
-        "partitions_count": num_partitions,
-    }).encode()
+    body = json.dumps(
+        {
+            "topic_name": topic,
+            "partitions_count": num_partitions,
+        }
+    ).encode()
     try:
-        req = urllib.request.Request(url, data=body, method="POST", headers=kafka["headers"])
+        req = urllib.request.Request(
+            url, data=body, method="POST", headers=kafka["headers"]
+        )
         urllib.request.urlopen(req, timeout=30)
         logger.info(f"Created topic '{topic}'")
         return True
@@ -501,16 +519,22 @@ def _create_kafka_topic(topic: str, kafka: dict, num_partitions: int = 6) -> boo
         return False
 
 
-def _submit_flink_statement(stmt_name: str, flink: dict, sql_dir: Path, is_ddl: bool = False) -> bool:
+def _submit_flink_statement(
+    stmt_name: str, flink: dict, sql_dir: Path, is_ddl: bool = False
+) -> bool:
     """Submit a Flink SQL statement from an SQL template file."""
     sql_file = sql_dir / f"{stmt_name}.sql"
     if not sql_file.exists():
         logger.warning(f"SQL template not found: {sql_file}")
         return False
 
-    sql = sql_file.read_text().strip().format(
-        catalog=flink["catalog"],
-        database=flink["database"],
+    sql = (
+        sql_file.read_text()
+        .strip()
+        .format(
+            catalog=flink["catalog"],
+            database=flink["database"],
+        )
     )
 
     payload = {
@@ -531,7 +555,10 @@ def _submit_flink_statement(stmt_name: str, flink: dict, sql_dir: Path, is_ddl: 
     retry_backoff = [3, 6, 12]
     for attempt in range(max_attempts):
         req = urllib.request.Request(
-            flink["base_url"], data=body, method="POST", headers=flink["headers"],
+            flink["base_url"],
+            data=body,
+            method="POST",
+            headers=flink["headers"],
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -557,8 +584,9 @@ def _submit_flink_statement(stmt_name: str, flink: dict, sql_dir: Path, is_ddl: 
     return False
 
 
-def _wait_for_dml_running(flink: dict, max_wait: int = 120,
-                          statements: list[str] | None = None) -> bool:
+def _wait_for_dml_running(
+    flink: dict, max_wait: int = 120, statements: list[str] | None = None
+) -> bool:
     """Poll DML statements until all reach RUNNING or timeout.
 
     now returns a bool — True iff every expected
@@ -584,7 +612,9 @@ def _wait_for_dml_running(flink: dict, max_wait: int = 120,
         for stmt_name in list(pending):
             url = f"{flink['base_url']}/{stmt_name}"
             try:
-                req = urllib.request.Request(url, method="GET", headers=flink["headers"])
+                req = urllib.request.Request(
+                    url, method="GET", headers=flink["headers"]
+                )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
                     phase = data.get("status", {}).get("phase", "")
@@ -601,7 +631,9 @@ def _wait_for_dml_running(flink: dict, max_wait: int = 120,
         logger.info("All DML statements are RUNNING")
         return True
     if failed:
-        logger.warning(f"{len(failed)} statement(s) failed: {', '.join(sorted(failed))}")
+        logger.warning(
+            f"{len(failed)} statement(s) failed: {', '.join(sorted(failed))}"
+        )
     if pending:
         logger.warning(f"Timed out waiting for: {', '.join(sorted(pending))}")
     return False
@@ -628,6 +660,7 @@ def _resolve_mongodb_uri(root: Path) -> str | None:
     user = env.get("TF_VAR_mongodb_username", "")
     pwd = env.get("TF_VAR_mongodb_password", "")
     from scripts.common.mongo import build_uri
+
     return build_uri(conn, user, pwd)
 
 
@@ -648,6 +681,7 @@ def _clear_mongodb_collections(root: Path) -> bool:
 
     try:
         from scripts.common.mongo import get_client
+
         client = get_client(uri, app_name="streaming-agents-pipeline-reset")
         client.admin.command("ping")
     except Exception as e:
@@ -657,7 +691,9 @@ def _clear_mongodb_collections(root: Path) -> bool:
     try:
         for db_name, coll_name in MONGODB_SINK_COLLECTIONS:
             result = client[db_name][coll_name].delete_many({})
-            logger.info(f"Cleared {db_name}.{coll_name} ({result.deleted_count} documents)")
+            logger.info(
+                f"Cleared {db_name}.{coll_name} ({result.deleted_count} documents)"
+            )
         return True
     except Exception as e:
         logger.warning(f"Error clearing MongoDB collections: {e}")
@@ -704,15 +740,23 @@ def reset_pipeline(root: Path) -> bool:
     for stmt_name in DML_STATEMENTS:
         _stop_flink_statement(stmt_name, flink)
 
+    # Track failures across the destructive+recreate steps. A reset that
+    # silently swallows a failed topic recreate or a stuck deletion would
+    # report success while leaving stale partition data — the exact failure
+    # this reset exists to prevent. Collect problems and fail at the end.
+    failures: list[str] = []
+
     # Step 2: Delete all DML + DDL statements
     print("  -> Deleting Flink statements...")
     for stmt_name in DML_STATEMENTS + DDL_STATEMENTS:
-        _delete_flink_statement(stmt_name, flink)
+        if not _delete_flink_statement(stmt_name, flink):
+            failures.append(f"delete Flink statement '{stmt_name}'")
 
     # Step 3: Delete all pipeline Kafka topics
     print("  -> Deleting Kafka topics...")
     for topic in PIPELINE_TOPICS:
-        _delete_kafka_topic(topic, kafka)
+        if not _delete_kafka_topic(topic, kafka):
+            failures.append(f"delete Kafka topic '{topic}'")
 
     # Step 4: Delete Schema Registry subjects (stale schemas cause column mismatches)
     print("  -> Deleting Schema Registry subjects...")
@@ -730,13 +774,17 @@ def reset_pipeline(root: Path) -> bool:
     print("  -> Waiting for topic deletions to propagate...")
     for topic in PIPELINE_TOPICS:
         if not _wait_for_kafka_topic_gone(topic, kafka, timeout=30):
-            print(f"     [warn] Topic '{topic}' still exists after 30s; "
-                  "recreate may keep stale data")
+            print(
+                f"     [warn] Topic '{topic}' still exists after 30s; "
+                "recreate may keep stale data"
+            )
+            failures.append(f"topic '{topic}' not gone before recreate")
 
     # Step 7: Recreate all pipeline Kafka topics
     print("  -> Recreating Kafka topics...")
     for topic in PIPELINE_TOPICS:
-        _create_kafka_topic(topic, kafka)
+        if not _create_kafka_topic(topic, kafka):
+            failures.append(f"recreate Kafka topic '{topic}'")
 
     # Step 8: Wait for topic metadata to propagate
     time.sleep(5)
@@ -750,6 +798,7 @@ def reset_pipeline(root: Path) -> bool:
         from scripts.common.pipeline_logger import PipelineLogger
         from requests.auth import HTTPDigestAuth
         from dotenv import dotenv_values
+
         env = dotenv_values(root / ".env")
         atlas_pub = (env.get("ATLAS_PUBLIC_KEY") or "").strip()
         atlas_priv = (env.get("ATLAS_PRIVATE_KEY") or "").strip()
@@ -757,8 +806,11 @@ def reset_pipeline(root: Path) -> bool:
         plog = PipelineLogger(name="pipeline-reset", root=root)
         if atlas_pub and atlas_priv and atlas_proj:
             print("  -> Restarting ASP processors (post-topic-recreate)...")
-            with plog.step("reset", "asp_restart_after_topic_recreate",
-                           topics=list(PIPELINE_TOPICS)):
+            with plog.step(
+                "reset",
+                "asp_restart_after_topic_recreate",
+                topics=list(PIPELINE_TOPICS),
+            ):
                 restart_processors_for_topics(
                     project_id=atlas_proj,
                     instance="asp-instance",
@@ -768,8 +820,12 @@ def reset_pipeline(root: Path) -> bool:
                 )
         else:
             print("  -> Skipping ASP restart (no Atlas Admin keys in env)")
-            plog.event("reset", "asp_restart_after_topic_recreate", "warn",
-                       reason="no_atlas_keys")
+            plog.event(
+                "reset",
+                "asp_restart_after_topic_recreate",
+                "warn",
+                reason="no_atlas_keys",
+            )
         plog.close()
     except Exception as exc:
         # graceful degradation — never abort reset on ASP failure
@@ -780,6 +836,7 @@ def reset_pipeline(root: Path) -> bool:
     # batch 1 (gentle 3x surge), not whatever multiplier the previous run
     # left behind.
     from scripts.common.datagen_helpers import reset_batch_counter
+
     if reset_batch_counter(root):
         print("  -> Reset dashboard batch counter (.batch_counter)")
 
@@ -789,12 +846,21 @@ def reset_pipeline(root: Path) -> bool:
     # Instead, restart_flink_dml() handles DROP + terraform -replace AFTER
     # schemas have been registered by ShadowTraffic data production.
 
+    if failures:
+        print(f"  [FAIL] Pipeline reset had {len(failures)} failed operation(s):")
+        for f in failures:
+            print(f"         - {f}")
+        print("  Stale data may remain. Re-run the reset after addressing these.")
+        return False
+
     print("  [ok] Pipeline cleanup complete (topics + schemas + MongoDB cleared)")
     print("  DML statements will be recreated after data starts flowing.")
     return True
 
 
-def _bootstrap_agent_statement(stmt_name: str, sql: str, flink: dict, max_wait: int = 60) -> bool:
+def _bootstrap_agent_statement(
+    stmt_name: str, sql: str, flink: dict, max_wait: int = 60
+) -> bool:
     """DELETE + CREATE + poll-to-COMPLETED for an agent/tool statement.
 
     mirrors deploy.py:_bootstrap_agent_statement so
@@ -842,20 +908,24 @@ def _bootstrap_agent_statement(stmt_name: str, sql: str, flink: dict, max_wait: 
         time.sleep(1)
 
     # 2. CREATE
-    payload = json.dumps({
-        "name": stmt_name,
-        "spec": {
-            "statement": sql,
-            "properties": {
-                "sql.current-catalog": flink["catalog"],
-                "sql.current-database": flink["database"],
+    payload = json.dumps(
+        {
+            "name": stmt_name,
+            "spec": {
+                "statement": sql,
+                "properties": {
+                    "sql.current-catalog": flink["catalog"],
+                    "sql.current-database": flink["database"],
+                },
+                "compute_pool_id": flink["compute_pool_id"],
+                "principal": flink["principal_id"],
             },
-            "compute_pool_id": flink["compute_pool_id"],
-            "principal": flink["principal_id"],
-        },
-    }).encode()
+        }
+    ).encode()
     try:
-        req = urllib.request.Request(base_url, data=payload, method="POST", headers=headers)
+        req = urllib.request.Request(
+            base_url, data=payload, method="POST", headers=headers
+        )
         urllib.request.urlopen(req, timeout=30)
     except urllib.error.HTTPError as e:
         body_text = e.read().decode()[:300] if e.fp else ""
@@ -924,6 +994,7 @@ def _mcp_healthy_from_env(root: Path) -> bool:
         return False
     try:
         from scripts.common.flink_pipeline import check_mcp_health
+
         return check_mcp_health(url, token)
     except Exception:
         return False
@@ -981,7 +1052,9 @@ def restart_flink_dml(root: Path) -> bool:
     # which no-ops against an existing raw-byte phantom ([val: BYTES]) and
     # leaves anomalies-enriched-insert failing with a sink-schema
     # mismatch. Dropping first forces the CTAS to create the typed table.
-    print("  -> Dropping CTAS catalog tables (anomalies_enriched, completed_actions)...")
+    print(
+        "  -> Dropping CTAS catalog tables (anomalies_enriched, completed_actions)..."
+    )
     _drop_ctas_catalog_tables(flink)
 
     # Recreate REST API-managed DDL statements (anomalies-enriched-ctas)
@@ -994,8 +1067,10 @@ def restart_flink_dml(root: Path) -> bool:
     print("  -> Bootstrapping dispatch agent + tool...")
     agent_ok = _bootstrap_agents(flink)
     if not agent_ok:
-        print("  [warn] Agent/tool bootstrap did not complete — "
-              "dispatch-insert will be skipped (other DML still created).")
+        print(
+            "  [warn] Agent/tool bootstrap did not complete — "
+            "dispatch-insert will be skipped (other DML still created)."
+        )
 
     # Recreate DML statements EXCEPT dispatch-insert (gated below).
     print("  -> Recreating Flink DML statements...")
@@ -1013,17 +1088,61 @@ def restart_flink_dml(root: Path) -> bool:
         dispatch_submitted = True
     else:
         reason = "agent bootstrap incomplete" if not agent_ok else "MCP unhealthy"
-        print(f"  [SKIP] dispatch-insert not submitted — {reason}. "
-              "The other DML statements were created. Fix the cause and "
-              "re-run, or click 'Run Agent Dispatch' in the dashboard.")
+        print(
+            f"  [SKIP] dispatch-insert not submitted — {reason}. "
+            "The other DML statements were created. Fix the cause and "
+            "re-run, or click 'Run Agent Dispatch' in the dashboard."
+        )
 
     # Wait for DML to reach RUNNING. Only the statements we actually
-    # submitted are expected to run.
+    # submitted are expected to run — AND we exclude best-effort ones from the
+    # health gate:
+    #   - anomalies-enriched-insert: its per-anomaly VECTOR_SEARCH_AGG against
+    #     the Atlas federated table reliably times out inside Flink under load.
+    #     It is OFF the critical path (anomalies-sink-insert reads detection
+    #     output directly), so its failure must NOT make the reset report a
+    #     failure. It is still submitted (RAG is best-effort; may run under
+    #     light load), just not required to be RUNNING.
     print("  -> Waiting for DML statements to reach RUNNING...")
-    expected = list(non_dispatch_dml)
+    _BEST_EFFORT_DML = {"anomalies-enriched-insert"}
+    expected = [s for s in non_dispatch_dml if s not in _BEST_EFFORT_DML]
     if dispatch_submitted:
         expected.append(_DISPATCH_STMT)
     dml_ok = _wait_for_dml_running(flink, max_wait=120, statements=expected)
+
+    # The DDL replace above dropped + recreated catalog tables — the CTAS
+    # ones (anomalies_enriched, completed_actions) AND the sink tables
+    # (zone_traffic_sink, anomalies_sink). Dropping a Confluent Flink table
+    # deletes its backing Kafka topic, so EVERY Kafka-consuming ASP
+    # processor's committed offsets now point at an old topic generation.
+    # The step-8b restart in reset_pipeline ran BEFORE this second drop, so
+    # it does not cover it — bounce them all here or they end the run
+    # STARTED-but-stalled / FAILED (observed live 2026-07-14: datagen left
+    # zone_traffic_ingestion STOPPED and anomalies_ingestion FAILED).
+    try:
+        from scripts.common.asp_restart import restart_processors_for_topics
+        from scripts.common.asp_topology import KAFKA_SOURCE_PROCESSORS
+        from requests.auth import HTTPDigestAuth
+        from dotenv import dotenv_values
+
+        env = dotenv_values(root / ".env")
+        atlas_pub = (env.get("ATLAS_PUBLIC_KEY") or "").strip()
+        atlas_priv = (env.get("ATLAS_PRIVATE_KEY") or "").strip()
+        atlas_proj = (env.get("ATLAS_PROJECT_ID") or "").strip()
+        if atlas_pub and atlas_priv and atlas_proj:
+            print("  -> Restarting ASP processors (post-DDL-recreate)...")
+            restart_processors_for_topics(
+                project_id=atlas_proj,
+                instance="asp-instance",
+                topics=list(KAFKA_SOURCE_PROCESSORS),
+                auth=HTTPDigestAuth(atlas_pub, atlas_priv),
+                timeout_per_processor=60,
+            )
+        else:
+            print("  -> Skipping post-DDL ASP restart (no Atlas Admin keys)")
+    except Exception as exc:
+        # graceful degradation — never abort on ASP restart failure
+        print(f"  [warn] post-DDL ASP restart raised: {exc} (continuing)")
 
     # report honestly. Overall success requires DML running AND
     # the agent chain bootstrapped (so dispatch works).
@@ -1031,8 +1150,10 @@ def restart_flink_dml(root: Path) -> bool:
     if overall_ok:
         print("  [ok] Flink statements recreated — all RUNNING")
     else:
-        print("  [warn] Flink statements recreated with FAILURES — "
-              "run 'uv run health' for details")
+        print(
+            "  [warn] Flink statements recreated with FAILURES — "
+            "run 'uv run health' for details"
+        )
     return overall_ok
 
 
@@ -1046,9 +1167,17 @@ def check_shadowtraffic_running() -> bool:
     """
     try:
         result = subprocess.run(
-            ["docker", "ps", "--filter", f"ancestor={SHADOWTRAFFIC_IMAGE}",
-             "--format", "{{.ID}}"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "docker",
+                "ps",
+                "--filter",
+                f"ancestor={SHADOWTRAFFIC_IMAGE}",
+                "--format",
+                "{{.ID}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -1063,19 +1192,28 @@ def stop_shadowtraffic() -> bool:
     """
     try:
         result = subprocess.run(
-            ["docker", "ps", "--filter", f"ancestor={SHADOWTRAFFIC_IMAGE}",
-             "--format", "{{.ID}}"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "docker",
+                "ps",
+                "--filter",
+                f"ancestor={SHADOWTRAFFIC_IMAGE}",
+                "--format",
+                "{{.ID}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         container_ids = result.stdout.strip().split()
-        if not container_ids or container_ids == ['']:
+        if not container_ids or container_ids == [""]:
             return True  # nothing to stop
 
         logger.info(f"Stopping {len(container_ids)} ShadowTraffic container(s)...")
         for cid in container_ids:
             subprocess.run(
                 ["docker", "stop", cid],
-                capture_output=True, timeout=30,
+                capture_output=True,
+                timeout=30,
             )
         return True
     except Exception as e:

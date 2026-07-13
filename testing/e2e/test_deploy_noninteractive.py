@@ -23,7 +23,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -361,6 +360,48 @@ def test_TC_NI_008_resume_force_still_short_circuits(with_noninteractive):
 
 
 # ---------------------------------------------------------------------------
+# TC-NI-FRESH: non-interactive fresh-cluster path (documented .env default)
+# ---------------------------------------------------------------------------
+
+def test_TC_NI_fresh_cluster_chooses_create_not_byo(with_noninteractive, monkeypatch):
+    """.env.example defaults create_atlas_cluster=true with ATLAS_* keys but NO
+    Mongo URI. Non-interactive prompt_mongodb_atlas must pick the CREATE branch
+    (using the ATLAS_* defaults) instead of falling into BYO, which would raise
+    on the missing connection string."""
+    deploy = with_noninteractive
+    saved: dict = {}
+    monkeypatch.setattr(deploy, "_save_env", lambda k, v: saved.__setitem__(k, v))
+    monkeypatch.setattr(deploy, "_save_env_many", lambda d: saved.update(d))
+
+    env = {
+        "TF_VAR_create_atlas_cluster": "true",
+        "ATLAS_PUBLIC_KEY": "pub-abc",
+        "ATLAS_PRIVATE_KEY": "priv-xyz",
+        "ATLAS_PROJECT_ID": "proj-123",
+        "ATLAS_CLUSTER_NAME": "streaming-agents-cluster",
+        # deliberately NO TF_VAR_mongodb_connection_string
+    }
+    # Must NOT raise (the BYO branch's _text on a missing URI would).
+    deploy.prompt_mongodb_atlas(env)
+    # The CREATE branch persists create=true and the generated DB creds.
+    assert saved.get("TF_VAR_create_atlas_cluster") == "true"
+    assert saved.get("ATLAS_PROJECT_ID") == "proj-123"
+    assert saved.get("TF_VAR_atlas_db_username")  # generated user persisted
+
+
+def test_TC_NI_byo_still_default_when_create_false(with_noninteractive, monkeypatch):
+    """When create_atlas_cluster is not 'true', the default stays BYO — a
+    missing connection string then raises the clear non-interactive error
+    rather than silently provisioning a cluster."""
+    deploy = with_noninteractive
+    monkeypatch.setattr(deploy, "_save_env", lambda k, v: None)
+    monkeypatch.setattr(deploy, "_save_env_many", lambda d: None)
+    env = {"TF_VAR_create_atlas_cluster": "false"}
+    with pytest.raises(RuntimeError):
+        deploy.prompt_mongodb_atlas(env)
+
+
+# ---------------------------------------------------------------------------
 # TC-NI-009: validation + missing-creds error path in main()
 # ---------------------------------------------------------------------------
 
@@ -374,10 +415,9 @@ def test_TC_NI_009_main_validates_credentials(deploy):
     assert SystemExit with code 2.
     """
     import os
+    import sys as _sys
     import tempfile
     from unittest import mock
-
-    import sys as _sys
 
     # Save module-level globals so we can restore them after main() runs
     # (main() mutates _NON_INTERACTIVE, HAS_RICH, HAS_QUESTIONARY as

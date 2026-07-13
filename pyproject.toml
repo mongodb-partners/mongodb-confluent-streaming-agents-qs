@@ -52,6 +52,10 @@ dependencies = [
     "pandas>=2.0.0",
     "streamlit-autorefresh>=1.0.0",
     "pydeck>=0.9.0",
+    # Live "DB is alive" SSE sidecar (Path B)
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "sse-starlette>=2.0.0",
 ]
 
 # Optional dependencies for enhanced functionality
@@ -65,6 +69,7 @@ dev = [
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
+    "mongomock>=4.1.0",
 ]
 
 [project.scripts]
@@ -78,6 +83,8 @@ publish-data = "scripts.publish_data:main"
 mcp-deploy = "scripts.mcp_deploy:main"
 health = "scripts.health:main"
 preflight = "scripts.preflight:main"
+live = "scripts.live_server:main"
+surge = "scripts.surge:main"
 
 [project.urls]
 Homepage = "https://github.com/mongodb-partners/mongodb-confluent-streaming-agents-qs"

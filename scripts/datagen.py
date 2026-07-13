@@ -142,7 +142,17 @@ def run_datagen(
             logger.info("Stopping any running ShadowTraffic containers...")
             stop_shadowtraffic()
             logger.info("Resetting streaming pipeline (Flink statements + Kafka topics)...")
-            reset_pipeline(project_root)
+            if not reset_pipeline(project_root):
+                # A failed reset means stale topics/statements may survive into
+                # this run (duplicate/old partition data, mismatched schemas).
+                # Surface it loudly rather than silently proceeding — the run
+                # can continue, but the operator must know the clean-slate
+                # guarantee did not hold.
+                logger.warning(
+                    "Pipeline reset reported failures — stale data may remain. "
+                    "Check the reset output above; consider re-running `uv run datagen` "
+                    "if the pipeline shows old/duplicate data."
+                )
 
         # Start ShadowTraffic (blocks until Docker exits).
         # When not dry_run, schedule Flink DML restart in a background thread
@@ -340,6 +350,25 @@ def main() -> None:
                 if not restart_flink_dml(project_root):
                     logger.error("Flink DML restart failed")
                     sys.exit(1)
+
+                # Phase 4: re-publish. Phase 3's DROP TABLE ride_requests
+                # (needed to clear the raw-byte phantom that Phase 2's publish
+                # auto-registered) DELETES the backing Kafka topic — and with
+                # it every record Phase 2 published. Without this re-publish,
+                # datagen ends with an EMPTY ride_requests topic and the
+                # pipeline sits idle (no windows, no anomalies) until someone
+                # publishes again. The typed table now exists in the catalog,
+                # so this publish does not re-trigger auto-registration.
+                logger.info(
+                    "Phase 4: Re-publishing ride data (Phase 3's table "
+                    "recreation emptied the ride_requests topic)..."
+                )
+                result = subprocess.run(cmd, cwd=project_root)
+                if result.returncode != 0:
+                    logger.error(
+                        f"Phase 4 re-publish failed with exit code {result.returncode}"
+                    )
+                    sys.exit(result.returncode)
 
             logger.info("--local: pipeline reset + data publication complete.")
             sys.exit(0)

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 
 KAFKA_SOURCE_PROCESSORS: dict[str, list[str]] = {
-    "zone_traffic_sink":  ["zone_traffic_ingestion"],
-    "anomalies_sink":     ["anomalies_ingestion"],
-    "completed_actions":  ["dispatch_log_ingestion"],
+    "zone_traffic_sink":   ["zone_traffic_ingestion"],
+    "anomalies_sink":      ["anomalies_ingestion"],
+    "anomalies_enriched":  ["anomalies_enriched_ingestion"],
+    "completed_actions":   ["dispatch_log_ingestion"],
 }
 
 

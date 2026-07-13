@@ -20,6 +20,7 @@ added coverage for MCP bearer tokens
 headers, and `ATLAS_PUBLIC_KEY` (half of HTTPDigestAuth and useful for
 account fingerprinting).
 """
+
 from __future__ import annotations
 
 import re
@@ -58,9 +59,18 @@ _AUTH_HEADER_RE = re.compile(
 # `public[_-]?key` catches Atlas paired-auth — public key alone isn't
 # a credential but paired with private it's the HTTPDigestAuth input.
 _SECRET_KEYS = (
-    "password", "passwd", "secret", "api[_-]?key", "auth[_-]?token",
-    "access[_-]?key", "session[_-]?token", "private[_-]?key", "voyage[_-]?key",
-    "client[_-]?auth", "bearer", "authorization",
+    "password",
+    "passwd",
+    "secret",
+    "api[_-]?key",
+    "auth[_-]?token",
+    "access[_-]?key",
+    "session[_-]?token",
+    "private[_-]?key",
+    "voyage[_-]?key",
+    "client[_-]?auth",
+    "bearer",
+    "authorization",
     "public[_-]?key",
 )
 
@@ -68,12 +78,14 @@ _SECRET_KEYS = (
 # where value is quoted or unquoted. Both YAML-ish and JSON-ish.
 _SECRET_KV_RE = re.compile(
     r"""
-    (?P<key>[\w-]*(?:""" + "|".join(_SECRET_KEYS) + r""")[\w-]*)        # key
-    (?P<sep>\s*[:=]\s*)                                                # separator (captures surrounding whitespace too — S12)
-    (?P<quote>['"]?)                                                   # optional quote
+    (?P<key>[\w-]*(?:"""
+    + "|".join(_SECRET_KEYS)
+    + r""")[\w-]*)        # key
+    (?P<sep>['"]?\s*[:=]\s*)                                           # separator; allow a closing key-quote (JSON "key":) then colon/eq (S12, +JSON)
+    (?P<quote>['"]?)                                                   # optional value quote
     (?P<val>[^\s'"]+?)                                                 # value
     (?P=quote)                                                         # matching close-quote
-    (?=\s|$|[,;])                                                      # end boundary
+    (?=\s|$|[,;}])                                                     # end boundary (incl. JSON object close)
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -82,11 +94,19 @@ _SECRET_KV_RE = re.compile(
 def _mask(value: str) -> str:
     """Mask a secret value, keeping first 4 / last 2 chars for traceability.
 
-    Values shorter than 8 chars are fully redacted to avoid leaking.
+    Values shorter than 8 chars (and falsy values) are fully redacted to
+    avoid leaking.
     """
-    if len(value) < 8:
+    if not value or len(value) < 8:
         return "***"
     return f"{value[:4]}…{value[-2:]}"
+
+
+# Public alias — the single source of truth for the {first4}…{last2} mask
+# used across summaries/logs. Import this instead of re-defining _mask.
+def mask_secret(value: str) -> str:
+    """Mask a secret to ``{first4}…{last2}`` (or ``***`` if short/empty)."""
+    return _mask(value)
 
 
 def redact(text: str) -> str:
@@ -103,6 +123,7 @@ def redact(text: str) -> str:
     # URI passwords first (more specific).
     def _repl_uri(m: "re.Match[str]") -> str:
         return f"{m.group('scheme')}***"
+
     text = _URI_USERPASS_RE.sub(_repl_uri, text)
 
     # HTTP Authorization-header form (handle BEFORE the K/V
@@ -110,15 +131,16 @@ def redact(text: str) -> str:
     # also match _SECRET_KV_RE under the `authorization` alternation,
     # but this dedicated regex preserves the scheme word for context).
     def _repl_auth(m: "re.Match[str]") -> str:
-        tok = m.group('tok')
+        tok = m.group("tok")
         if tok == "***" or "…" in tok:
             return m.group(0)
         return f"{m.group('prefix')}{_mask(tok)}"
+
     text = _AUTH_HEADER_RE.sub(_repl_auth, text)
 
     # Key/value pairs.
     def _repl_kv(m: "re.Match[str]") -> str:
-        val = m.group('val')
+        val = m.group("val")
         # idempotency — don't re-mask an already-masked
         # value (e.g. `hunt…et` from a prior pass).
         if val == "***" or "…" in val:
@@ -127,6 +149,7 @@ def redact(text: str) -> str:
             f"{m.group('key')}{m.group('sep')}"
             f"{m.group('quote')}{_mask(val)}{m.group('quote')}"
         )
+
     text = _SECRET_KV_RE.sub(_repl_kv, text)
 
     return text
