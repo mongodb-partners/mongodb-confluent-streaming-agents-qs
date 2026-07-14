@@ -294,7 +294,7 @@ use analytics
 db.zone_anomalies.find().sort({ window_time: -1 }).limit(5)
 ```
 
-Each document lands with an `anomaly_reason` synthesized from the detection numbers (surge magnitude vs expected baseline). Shortly afterwards — when the best-effort RAG path (Step 5) completes — the `anomalies_enriched_ingestion` processor merges the LLM-generated explanation and the `top_chunk_*` vector-search evidence onto the same document, and Mission Control updates the anomaly card in place.
+Each document lands with an `anomaly_reason` synthesized from the detection numbers (surge magnitude vs expected baseline). Shortly afterwards, once the best-effort RAG path (Step 5) completes, the `anomalies_enriched_ingestion` processor merges the LLM-generated explanation and the `top_chunk_*` vector-search evidence onto the same document, and Mission Control updates the anomaly card in place.
 
 ### 10. Watch it live in Mission Control
 

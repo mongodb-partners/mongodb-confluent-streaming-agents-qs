@@ -46,12 +46,12 @@
 
 **Symptom:** The `anomalies-enriched-insert` statement goes FAILED with a `VECTOR_SEARCH_AGG` timeout error, while the rest of the pipeline keeps running.
 
-**Cause:** The per-anomaly `VECTOR_SEARCH_AGG` call against Atlas can time out inside Flink under load. The statement already passes `MAP['client_timeout', 120, 'retry_count', 6]` to `VECTOR_SEARCH_AGG` (`client_timeout` is a per-call option map entry — it is NOT a table option), but timeouts can still exhaust the retries.
+**Cause:** The per-anomaly `VECTOR_SEARCH_AGG` call against Atlas can time out inside Flink under load. The statement already passes `MAP['client_timeout', 120, 'retry_count', 6]` to `VECTOR_SEARCH_AGG` (`client_timeout` is a per-call option map entry, not a table option), but timeouts can still exhaust the retries.
 
 **Impact:** This path is best-effort **by design**. `anomalies-sink-insert` reads directly from `anomalies_per_zone`, so anomalies keep reaching `analytics.zone_anomalies` (and Mission Control) even while enrichment is FAILED. Anomaly cards keep their synthesized `anomaly_reason`, but the LLM explanation and `top_chunk_*` evidence (merged onto the docs by the `anomalies_enriched_ingestion` ASP processor) stop updating until the statement runs again.
 
 **Fix:**
-1. Run `uv run datagen` — its `restart_flink_dml` step deletes and recreates the DML statements.
+1. Run `uv run datagen`. Its `restart_flink_dml` step deletes and recreates the DML statements.
 2. If it fails again immediately, check the health of the `vector_index` Atlas Search index on `events.knowledge_base` in the Atlas UI.
 
 ### Flink statement shows FAILED with "SourceInvalidValue (1200)"
@@ -282,18 +282,18 @@ uv run asp-setup  # Re-runs setup, starts failed processors
 
 **Symptom:** `events.knowledge_base` has no documents (or documents without `embedding` arrays), the Mission Control Events tab is empty, and the agent reasoning panel shows no retrieved evidence chunks.
 
-**Cause:** The knowledge base is embedded and seeded **in Python at deploy time** by `populate_knowledge_base()` (`scripts/asp_setup.py`) using the Voyage AI endpoint. If `TF_VAR_voyage_api_key` was missing or invalid during deploy, the seeding step warns and skips — the rest of the pipeline still works, so the failure is easy to miss. (Historical note: this used to be the `event_knowledge_base_population` ASP processor, but ASP `$https` calls to the Voyage endpoint fail with HTTP 400, so the processor was removed.)
+**Cause:** The knowledge base is embedded and seeded **in Python at deploy time** by `populate_knowledge_base()` (`scripts/asp_setup.py`) using the Voyage AI endpoint. If `TF_VAR_voyage_api_key` was missing or invalid during deploy, the seeding step warns and skips. The rest of the pipeline still works, so the failure is easy to miss. (Historical note: this used to be the `event_knowledge_base_population` ASP processor, but ASP `$https` calls to the Voyage endpoint fail with HTTP 400, so the processor was removed.)
 
 **Fix:**
 1. Set a valid `TF_VAR_voyage_api_key` in `.env` (and `TF_VAR_voyage_api_endpoint` if you override the default `https://ai.mongodb.com/v1/embeddings`)
 2. Verify `events.calendar` has the 10 seed events
-3. Re-run `uv run asp-setup` — its seed step re-runs `populate_knowledge_base()` (or use `uv run asp-setup --seed-only` to skip ASP provisioning)
+3. Re-run `uv run asp-setup`. Its seed step re-runs `populate_knowledge_base()` (or use `uv run asp-setup --seed-only` to skip ASP provisioning)
 4. Verify Voyage AI is enabled on your Atlas project
 
 If the knowledge base **is** populated but anomaly cards never gain evidence chunks, check the rest of the RAG path:
 
-1. The Mission Control server (`uv run live`) runs a **RAG fallback worker**: ~40 s after an anomaly lands without chunks, it embeds the query via Voyage and runs Atlas `$vectorSearch` directly, writing `top_chunk_*` onto the document (`enriched_by: rag-fallback`). It requires `TF_VAR_voyage_api_key` in `.env` — the server logs `rag-fallback disabled` at startup if the key is missing. This is the reliable path; keep `uv run live` running.
-2. The streaming-native path is best-effort: the `anomalies-enriched-insert` Flink statement must be RUNNING (see the vector-search timeout section above — `uv run surge` recreates it automatically if FAILED) and the `anomalies_enriched_ingestion` ASP processor must be STARTED — it merges the Flink LLM explanation and `top_chunk_*` onto the anomaly documents when that statement survives.
+1. The Mission Control server (`uv run live`) runs a **RAG fallback worker**: ~40 s after an anomaly lands without chunks, it embeds the query via Voyage and runs Atlas `$vectorSearch` directly, writing `top_chunk_*` onto the document (`enriched_by: rag-fallback`). It requires `TF_VAR_voyage_api_key` in `.env` (the server logs `rag-fallback disabled` at startup if the key is missing). This is the reliable path; keep `uv run live` running.
+2. The streaming-native path is best-effort: the `anomalies-enriched-insert` Flink statement must be RUNNING (see the vector-search timeout section above; `uv run surge` recreates it automatically if FAILED) and the `anomalies_enriched_ingestion` ASP processor must be STARTED. It merges the Flink LLM explanation and `top_chunk_*` onto the anomaly documents when that statement survives.
 
 ### ASP processor stop/start hangs or returns a 409 lock conflict
 
@@ -301,7 +301,7 @@ If the knowledge base **is** populated but anomaly cards never gain evidence chu
 
 **Cause:** Atlas serializes processor lifecycle operations. A `:start` issued while a `:stop` is still finalizing hits the "has the lock" conflict.
 
-**Fix:** The scripts handle this automatically — `scripts/common/asp_restart.py` waits for STOPPED, then retries `:start` up to 4 times with a short backoff on lock conflicts. If you restart a processor manually from the Atlas UI or API and it hangs, wait ~60 seconds and retry the start.
+**Fix:** The scripts handle this automatically. `scripts/common/asp_restart.py` waits for STOPPED, then retries `:start` up to 4 times with a short backoff on lock conflicts. If you restart a processor manually from the Atlas UI or API and it hangs, wait ~60 seconds and retry the start.
 
 ### dispatch_log_ingestion processor keeps failing
 
@@ -364,7 +364,7 @@ uv run live
 
 **Cause:** The browser's SSE connection to `/api/stream` dropped (`RECONNECTING`), or it could not be re-established (`OFFLINE`). Either the live server is down, or the server itself lost its Atlas change stream.
 
-**Fix:** The browser auto-reconnects, and the server holds its Atlas change stream with exponential-backoff reconnect (1s → 30s cap) — transient blips heal on their own. If the badge stays OFFLINE:
+**Fix:** The browser auto-reconnects, and the server holds its Atlas change stream with exponential-backoff reconnect (1s → 30s cap), so transient blips heal on their own. If the badge stays OFFLINE:
 1. Restart the sidecar: `uv run live`
 2. Check `GET /api/health` on the live server for the watcher state
 3. Verify `TF_VAR_mongodb_connection_string` (plus username/password) in `.env` resolves and is valid
@@ -372,7 +372,7 @@ uv run live
 
 ### Mission Control panels are empty
 
-**Cause:** The page bootstraps from Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`, `fleet.dispatch_log`, `events.knowledge_base`, `fleet.vessel_catalog`). Empty panels mean those collections have no data yet — the UI is a pure projection of database writes.
+**Cause:** The page bootstraps from Atlas collections (`analytics.zone_traffic`, `analytics.zone_anomalies`, `fleet.dispatch_log`, `events.knowledge_base`, `fleet.vessel_catalog`). Empty panels mean those collections have no data yet. The UI is a pure projection of database writes.
 
 **Fix:**
 1. Run `uv run health` to see which pipeline stage is not producing

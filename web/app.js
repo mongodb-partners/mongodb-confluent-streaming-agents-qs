@@ -178,7 +178,7 @@ function renderReason() {
   $('#reason-zone').textContent = a ? a.zone : '';
   if (!a) {
     box.innerHTML = `<div class="empty">When a surge lands, the agent's explanation appears
-      here — grounded in event context retrieved with Atlas Vector Search.</div>`;
+      here, grounded in event context retrieved with Atlas Vector Search.</div>`;
     return;
   }
   box.innerHTML = `
@@ -190,7 +190,7 @@ function renderReason() {
     <div class="beat">
       <div class="lbl">${icon('vector', 12)} Context <span class="chip">$vectorSearch</span></div>
       ${a.chunks.map((c, i) => `<div class="evidence" style="animation-delay:${REDUCED ? 0 : i * 0.14}s">
-        <b>Chunk ${i + 1}</b> — ${esc(c)}</div>`).join('')}
+        <b>Chunk ${i + 1}</b>: ${esc(c)}</div>`).join('')}
     </div>` : ''}
     ${a.dispatch ? `
     <div class="beat">
@@ -345,7 +345,7 @@ function renderEvents() {
     return `<div class="kbcard ${esc(impact)}">
       <div class="row"><span class="name">${esc(ev.event_name || 'Event')}</span>
         <span class="pill impact-${esc(impact)}">${esc(impact)}</span></div>
-      <div class="meta">${esc(ev.zone || '')}${ev.venue ? ` — ${esc(ev.venue)}` : ''}
+      <div class="meta">${esc(ev.zone || '')}${ev.venue ? `, ${esc(ev.venue)}` : ''}
         ${ev.expected_attendance ? ` · ${Number(ev.expected_attendance).toLocaleString()} expected` : ''}</div>
       ${ev.description ? `<div class="desc">${esc(String(ev.description).slice(0, 180))}</div>` : ''}
     </div>`;
@@ -460,7 +460,7 @@ function onAnomaly(doc) {
   setStageCount('detect', (typeof stageCounts.detect === 'number' ? stageCounts.detect : 0) + 1);
   setStageCount('context', (typeof stageCounts.context === 'number' ? stageCounts.context : 0) + (rec.chunks.length ? 1 : 0));
   bumpKpi('anomalies', kpiTarget.anomalies + 1);
-  showBanner('surgekind', `⚠ SURGE DETECTED — ${rec.zone.toUpperCase()}`);
+  showBanner('surgekind', `⚠ SURGE DETECTED: ${rec.zone.toUpperCase()}`);
   addFeed('surge', `surge · ${rec.zone}`, `${rec.actual} vs ${rec.expected} expected`);
   $('#hint').classList.remove('show');
   setSurgeZones(anomalies.slice(0, 5).filter(a => !a.dispatch).map(a => a.zone));
@@ -473,7 +473,7 @@ function onDispatch(doc) {
   setStageCount('dispatch', (typeof stageCounts.dispatch === 'number' ? stageCounts.dispatch : 0) + 1);
   bumpKpi('dispatches', kpiTarget.dispatches + 1);
   const zone = doc.pickup_zone ?? '';
-  showBanner('dispatchkind', `⛴ AGENT DISPATCHING — ${zone.toUpperCase() || 'FLEET'}`);
+  showBanner('dispatchkind', `⛴ AGENT DISPATCHING: ${zone.toUpperCase() || 'FLEET'}`);
   addFeed('boat', `dispatch · ${zone}`, plainify(cleanDispatchSummary(doc.dispatch_summary)).slice(0, 90));
   addDispatch(doc);
   // Stamp the matching surge card (most recent undispatched anomaly in the zone).
@@ -516,14 +516,14 @@ function connect() {
 
 // ---- guided tour -----------------------------------------------------------------------------------
 const TOUR = [
-  { sel: '#title', title: 'Welcome to Mission Control', body: 'A live fleet-operations console for New Orleans. Streaming ride requests flow through Confluent Cloud, Flink SQL detects demand surges, MongoDB Atlas Vector Search supplies the operational context, and an AI agent dispatches boats — with no human in the loop. Everything you see is the real pipeline, live.' },
+  { sel: '#title', title: 'Welcome to Mission Control', body: 'A live fleet-operations console for New Orleans. Streaming ride requests flow through Confluent Cloud, Flink SQL detects demand surges, MongoDB Atlas Vector Search supplies the operational context, and an AI agent dispatches boats, with no human in the loop. Everything you see is the real pipeline, live.' },
   { sel: '#rail', title: 'The pipeline, end to end', body: 'Sense → reason → act, left to right: Kafka ride requests, Flink tumbling windows, anomaly detection in Flink SQL, context retrieval with Atlas Vector Search, the agent\'s decision, and the dispatch written to Atlas. Watch a light travel down this rail as each real event lands.' },
   { sel: '#stage', title: 'The live dispatch map', body: 'Boats animate along the actual Mississippi River centerline (OpenStreetMap geometry) from their home docks to the surge zone. Green trails are dispatches in flight; the pulsing green dot marks the zone under surge.' },
-  { sel: '#queue-panel', title: 'Surges, traffic and events', body: 'Every anomaly Flink SQL flags, newest first — actual vs expected demand and the surge multiplier. A card flips from DETECTED to DISPATCHED the moment the agent acts on it. The tabs switch to the live per-zone Traffic chart (every 1-minute Flink window) and the Events knowledge base that Atlas Vector Search retrieves context from.' },
+  { sel: '#queue-panel', title: 'Surges, traffic and events', body: 'Every anomaly Flink SQL flags, newest first: actual vs expected demand and the surge multiplier. A card flips from DETECTED to DISPATCHED the moment the agent acts on it. The tabs switch to the live per-zone Traffic chart (every 1-minute Flink window) and the Events knowledge base that Atlas Vector Search retrieves context from.' },
   { sel: '#reason-panel', title: 'Inside the agent\'s head', body: 'Why the anomaly fired, the event context retrieved with $vectorSearch (Jazz Fest, a Saints game…), and the action the agent took. This is the "reason" step of sense → reason → act, made visible.' },
-  { sel: '#feed-panel', title: 'Live operations feed', body: 'A pure projection of MongoDB Atlas change streams — every row is a database write pushed to this screen the instant it lands. Nothing here is simulated client-side.' },
+  { sel: '#feed-panel', title: 'Live operations feed', body: 'A pure projection of MongoDB Atlas change streams. Every row is a database write pushed to this screen the instant it lands. Nothing here is simulated client-side.' },
   { sel: '#bottom', title: 'The payoff readout', body: 'Live counts straight from the cluster: traffic windows, anomalies, autonomous dispatches, and every change-stream event received this session.' },
-  { sel: '#countdown', title: 'Make it fire on cue', body: 'Flink windows close every minute. Run `uv run surge` in a terminal and the full loop — surge banner, reasoning, boats — lands within one window. That\'s the whole webinar story in sixty seconds.' },
+  { sel: '#countdown', title: 'Make it fire on cue', body: 'Flink windows close every minute. Run `uv run surge` in a terminal and the full loop (surge banner, reasoning, boats) lands within one window. That\'s the whole webinar story in sixty seconds.' },
 ];
 let tourIx = 0;
 function positionTour() {
@@ -569,7 +569,7 @@ async function boot() {
   try { bs = await fetch('/api/bootstrap').then(r => r.json()); } catch { /* offline boot */ }
   GEO = bs?.geo ?? null;
   if (GEO) initMap(GEO, bs.vessels || {});
-  if (bs?.connected === false) $('#stale').textContent = 'atlas unreachable at boot — waiting for the stream';
+  if (bs?.connected === false) $('#stale').textContent = 'atlas unreachable at boot, waiting for the stream';
 
   // Warm-start: recent history so the screen is alive before the first live event.
   const counts = bs?.counts ?? {};

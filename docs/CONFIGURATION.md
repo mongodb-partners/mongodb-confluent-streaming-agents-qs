@@ -263,7 +263,7 @@ These are written by `deploy.py` after Terraform completes. Do not edit manually
 | `ride_requests` | 6 | ShadowTraffic / publish_data | Flink (windowed_traffic view) |
 | `windowed_traffic` | 6 | Flink (view materialization) | Flink (anomaly detection) |
 | `anomalies_per_zone` | 6 | Flink (anomaly-detection-insert) | Flink (enrichment + dispatch) |
-| `anomalies_enriched` | 6 | Flink (anomalies-enriched-insert) | ASP `anomalies_enriched_ingestion` — merges the LLM reason + `top_chunk_*` evidence onto `analytics.zone_anomalies` docs |
+| `anomalies_enriched` | 6 | Flink (anomalies-enriched-insert) | ASP `anomalies_enriched_ingestion`: merges the LLM reason + `top_chunk_*` evidence onto `analytics.zone_anomalies` docs |
 | `zone_traffic_sink` | 6 | Flink (zone-traffic-sink-insert) | ASP (zone_traffic_ingestion) |
 | `anomalies_sink` | 6 | Flink (anomalies-sink-insert) | ASP (anomalies_ingestion) |
 | `event_documents` | 6 | ASP (event_publication_to_kafka) | Flink (documents_vectordb) |

@@ -91,7 +91,7 @@ The deploy wizard prompts for all credentials and handles the complete setup:
 
 ### Mission Control (the UI)
 
-`uv run live` serves **Mission Control** at http://localhost:8502 — a real-time
+`uv run live` serves **Mission Control** at http://localhost:8502, a real-time
 HUD driven entirely by MongoDB Atlas change streams: an animated dispatch map
 (boats follow the real Mississippi centerline), a sense→reason→act pipeline rail
 that pulses as events land, the surge queue with per-zone traffic charts and the
@@ -139,7 +139,7 @@ uv run datagen --local
 | `uv run asp-setup` | Provision ASP resources (standalone) |
 | `uv run mcp-deploy` | Deploy MCP server to ECS Express |
 | `uv run mcp-deploy --destroy` | Tear down MCP server |
-| `uv run live` | Launch Mission Control — the UI (HUD + SSE, port 8502) |
+| `uv run live` | Launch Mission Control, the UI (HUD + SSE, port 8502) |
 | `uv run surge` | Trigger a deterministic, window-aligned demand surge |
 | `uv run publish_data --data-file <path> --force` | Publish ride data to Kafka |
 | `uv run health` | Single-command pipeline health report (Flink + ASP + Kafka + Atlas) |

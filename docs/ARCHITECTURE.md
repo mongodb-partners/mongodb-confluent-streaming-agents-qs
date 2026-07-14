@@ -169,7 +169,7 @@ MongoDB Atlas ──(cluster-level change stream, watcher thread)──▶ Chang
 
 The UI is a pure projection of database writes: nothing is staged client-side, so what appears on screen is evidence that the pipeline actually wrote to Atlas.
 
-The server also runs a **RAG fallback worker**: the Flink enrichment statement (`anomalies-enriched-insert`) is best-effort — its per-anomaly federated vector search can time out and kill the statement. When an anomaly document still has no `top_chunk_*` evidence ~40 s after landing, the worker performs the same retrieval directly (Voyage query embedding + Atlas `$vectorSearch` on `events.knowledge_base`) and `$set`s the chunks onto the document (`enriched_by: rag-fallback`), which the change stream then pushes to the browser. The worker writes real vector-search results to the database; the UI still only renders database state. It requires `TF_VAR_voyage_api_key` and is skipped (with a log line) otherwise.
+The server also runs a **RAG fallback worker**: the Flink enrichment statement (`anomalies-enriched-insert`) is best-effort. Its per-anomaly federated vector search can time out and kill the statement. When an anomaly document still has no `top_chunk_*` evidence ~40 s after landing, the worker performs the same retrieval directly (Voyage query embedding + Atlas `$vectorSearch` on `events.knowledge_base`) and `$set`s the chunks onto the document (`enriched_by: rag-fallback`), which the change stream then pushes to the browser. The worker writes real vector-search results to the database; the UI still only renders database state. It requires `TF_VAR_voyage_api_key` and is skipped (with a log line) otherwise.
 
 ## Flink Statement Management
 
