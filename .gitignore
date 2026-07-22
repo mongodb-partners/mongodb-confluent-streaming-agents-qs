@@ -43,6 +43,13 @@ specs/
 # Local webinar narration script — never committed
 story.md
 
+# Local webinar working files — never committed
+# (the audience CSV contains registrant PII)
+Confluent Webinar Audience*.csv
+MongoDB & Confluent DDS Webinar Brief*.md
+MongoDB Atlas Confluent - Webinar*.md
+[[]WIP[]]*.pptx
+
 # playwright-cli session artifacts
 .playwright-cli/
 

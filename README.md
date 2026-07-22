@@ -117,6 +117,15 @@ that screen, or your `uv run health` output, is your proof of a working
 deployment. If anything reports unhealthy, see
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
+> **Tip — keep the stream flowing.** Flink processes this pipeline on
+> event-time watermarks, so a window only closes when later events arrive —
+> standard streaming semantics. Production traffic provides that continuously;
+> a quickstart that's idle between manual surges doesn't. `uv run nudge
+> --minutes 60 --heal` simulates baseline city traffic (a light trickle, far
+> below any anomaly threshold) so surge windows close on schedule and the demo
+> stays warm. Fired a surge into a quiet pipeline? A one-shot `uv run nudge`
+> closes the pending window.
+
 ### Generate continuous data (optional)
 
 ```bash
@@ -141,6 +150,8 @@ uv run datagen --local
 | `uv run mcp-deploy --destroy` | Tear down MCP server |
 | `uv run live` | Launch Mission Control, the UI (HUD + SSE, port 8502) |
 | `uv run surge` | Trigger a deterministic, window-aligned demand surge |
+| `uv run nudge` | One-shot watermark advance for an idle pipeline |
+| `uv run nudge --minutes N --heal` | Simulate baseline traffic during live demos; `--heal` keeps the RAG enrichment statement running |
 | `uv run publish_data --data-file <path> --force` | Publish ride data to Kafka |
 | `uv run health` | Single-command pipeline health report (Flink + ASP + Kafka + Atlas) |
 | `uv run preflight` | Phase-aware connectivity probes (`--phase X`, `--json`) |

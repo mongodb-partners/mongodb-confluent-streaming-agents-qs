@@ -50,9 +50,23 @@
 
 **Impact:** This path is best-effort **by design**. `anomalies-sink-insert` reads directly from `anomalies_per_zone`, so anomalies keep reaching `analytics.zone_anomalies` (and Mission Control) even while enrichment is FAILED. Anomaly cards keep their synthesized `anomaly_reason`, but the LLM explanation and `top_chunk_*` evidence (merged onto the docs by the `anomalies_enriched_ingestion` ASP processor) stop updating until the statement runs again.
 
+**Fix (in order of increasing effort):**
+1. Nothing, if you're about to fire a surge: `uv run surge` checks this statement first and auto-recreates it (from the latest offset) before publishing, so the surge it fires still gets its LLM explanation and evidence chunks.
+2. For live sessions, run the heartbeat with the heal watchdog: `uv run nudge --minutes 60 --heal`. Every ~2 minutes it checks the statement and recreates it if FAILED, so it never stays down longer than one check interval.
+3. `uv run datagen` — full reset; its `restart_flink_dml` step deletes and recreates **all** DML statements (~12 min, use when other statements are also unhealthy).
+4. If it fails again immediately after every recreate, check the health of the `vector_index` Atlas Search index on `events.knowledge_base` in the Atlas UI.
+
+> Note: the timeout itself is not tunable away. `client_timeout`/`retry_count` are already raised well above defaults, and the underlying per-anomaly federated `$vectorSearch` latency lives on the Atlas side of an Open Preview integration. Recreation-on-failure plus the direct sink path *is* the designed mitigation.
+
+### Surge fired but no anomaly ever appears (idle pipeline / watermark stall)
+
+**Symptom:** `uv run surge` publishes successfully and `uv run health` is green, but no SURGE banner, anomaly, or dispatch ever materializes — not even after 5+ minutes.
+
+**Cause:** The `ride_requests` table uses `WATERMARK FOR request_ts AS request_ts - INTERVAL '5' SECOND`. A tumbling window only closes when a *later* record arrives to push the watermark past the window boundary. If nothing has been published since your surge, the window containing it stays open indefinitely — the surge is sitting in Flink, invisible, waiting for the next record.
+
 **Fix:**
-1. Run `uv run datagen`. Its `restart_flink_dml` step deletes and recreates the DML statements.
-2. If it fails again immediately, check the health of the `vector_index` Atlas Search index on `events.knowledge_base` in the Atlas UI.
+1. One-shot unstick: `uv run nudge`. It publishes a few baseline records per zone stamped ~now, the watermark advances, and the pending surge window closes within ~1-2 minutes.
+2. Prevention during demos: keep `uv run nudge --minutes 60 --heal` running in a spare terminal. It publishes 1 record/zone every 20s — far below any anomaly threshold, so the heartbeat itself can never register as a surge — and every surge window closes on schedule.
 
 ### Flink statement shows FAILED with "SourceInvalidValue (1200)"
 

@@ -85,6 +85,7 @@ health = "scripts.health:main"
 preflight = "scripts.preflight:main"
 live = "scripts.live_server:main"
 surge = "scripts.surge:main"
+nudge = "scripts.nudge:main"
 
 [project.urls]
 Homepage = "https://github.com/mongodb-partners/mongodb-confluent-streaming-agents-qs"

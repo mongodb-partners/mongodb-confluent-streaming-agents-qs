@@ -188,7 +188,7 @@ The enrichment pipeline:
 
 > **Note:** The deploy script now automatically creates the `dispatch-insert` statement, which reads directly from `anomalies_per_zone` and dispatches boats without waiting for RAG enrichment. This is the **parallel dispatch path**; it fires within seconds of anomaly detection.
 >
-> To exercise the loop on demand, run `uv run surge` (triggers a deterministic, window-aligned demand surge) and `uv run health` (verifies the whole pipeline).
+> To exercise the loop on demand, run `uv run surge` (triggers a deterministic, window-aligned demand surge) and `uv run health` (verifies the whole pipeline). Windows close on event-time watermarks, so keep `uv run nudge --minutes 60 --heal` running during a live session to simulate baseline traffic — or run a one-shot `uv run nudge` after an idle period (details: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#surge-fired-but-no-anomaly-ever-appears-idle-pipeline--watermark-stall)).
 
 The agent tools and agent definition are created by Terraform (in the `agents` module). To inspect them in the Flink SQL workspace:
 

@@ -201,7 +201,7 @@ These are idempotent (`CREATE IF NOT EXISTS`) and managed by `terraform apply`.
 
 These are long-running streaming jobs that don't fit Terraform's plan/apply lifecycle. They are deleted on `uv run destroy` and recreated on `uv run deploy`.
 
-> **Note:** `anomalies-enriched-insert` is best-effort. It passes `MAP['client_timeout', 120, 'retry_count', 6]` to `VECTOR_SEARCH_AGG`, but the statement can still go FAILED on a vector-search timeout. Because `anomalies-sink-insert` reads directly from `anomalies_per_zone`, anomalies keep reaching Atlas (and Mission Control) even while enrichment is down. Recover with `uv run datagen` (restarts the DML statements) or by resuming deploy's `flink_dml` phase.
+> **Note:** `anomalies-enriched-insert` is best-effort. It passes `MAP['client_timeout', 120, 'retry_count', 6]` to `VECTOR_SEARCH_AGG`, but the statement can still go FAILED on a vector-search timeout. Because `anomalies-sink-insert` reads directly from `anomalies_per_zone`, anomalies keep reaching Atlas (and Mission Control) even while enrichment is down. Recovery, cheapest first: `uv run surge` auto-recreates it (from the latest offset) before every surge it fires; `uv run nudge --minutes N --heal` recreates it within ~2 minutes of any failure for as long as the heartbeat runs; `uv run datagen` (or resuming deploy's `flink_dml` phase) restarts all DML statements.
 
 ## Deployment Order
 
