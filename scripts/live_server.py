@@ -451,7 +451,20 @@ class RagFallbackWorker:
         }
         for i, hit in enumerate(hits[:3], start=1):
             update[f"top_chunk_{i}"] = hit.get("chunk") or ""
-        top = hits[0]
+        # Prefer the highest-ranked HIGH-impact hit for the causal sentence.
+        # The query explicitly asks for HIGH impact events, but raw vector
+        # similarity can rank a low-impact event first (e.g. an evening
+        # jazz show when the surge window falls in the evening) — and
+        # "Likely cause: Jazz at Preservation Hall (concert, low impact)"
+        # is a self-contradicting explanation for a 40x surge. min() is
+        # stable, so vector-search order is preserved within each tier.
+        _impact_rank = {"high": 0, "medium": 1}
+        top = min(
+            hits,
+            key=lambda h: _impact_rank.get(
+                str(h.get("impact_level", "")).lower(), 2
+            ),
+        )
         if top.get("event_name"):
             base = (doc.get("anomaly_reason") or "").rstrip(". ")
             update["anomaly_reason"] = (

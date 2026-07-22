@@ -110,7 +110,7 @@ uv run surge     # trigger a demand surge and watch Mission Control react end to
 ```
 
 A healthy deployment shows `Overall: HEALTHY` from `uv run health`, and within
-about two minutes of `uv run surge` Mission Control (http://localhost:8502)
+a few minutes of `uv run surge` Mission Control (http://localhost:8502)
 displays the full loop: SURGE DETECTED banner → agent reasoning with Vector
 Search evidence → AGENT DISPATCHING → boats moving on the map. A screenshot of
 that screen, or your `uv run health` output, is your proof of a working

@@ -142,14 +142,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     deadline = time.time() + args.minutes * 60
     tick = 0
     per_zone = 1  # loop mode: 1/zone/tick; at 20s interval = 3/zone/min
+    # flush=True on every loop-mode print: the heartbeat is watched live
+    # (and often piped through tee/nohup during rehearsals); block-buffered
+    # stdout would hide ticks for minutes and lose them entirely on a kill.
     print(
         f"  HEARTBEAT — {per_zone}/zone every {args.interval:.0f}s for "
-        f"{args.minutes:.0f} min ({len(SURGE_EVENT_ZONES)} zones). Ctrl-C to stop."
+        f"{args.minutes:.0f} min ({len(SURGE_EVENT_ZONES)} zones). Ctrl-C to stop.",
+        flush=True,
     )
     if args.heal:
         print(
             f"  HEAL WATCHDOG — checking '{RAG_STATEMENT}' every "
-            f"{HEAL_CHECK_EVERY_S:.0f}s; recreates it only if FAILED."
+            f"{HEAL_CHECK_EVERY_S:.0f}s; recreates it only if FAILED.",
+            flush=True,
         )
     if args.dry_run:
         print("[DRY RUN] Not publishing.")
@@ -163,12 +168,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         status = "ok" if rc == 0 else f"FAILED (rc={rc})"
         print(
             f"  tick {tick}: {len(records)} records {status} "
-            f"({time.strftime('%H:%M:%S')})"
+            f"({time.strftime('%H:%M:%S')})",
+            flush=True,
         )
         if rc != 0:
             # Loud but keep trying: a transient publish failure must not
             # silently end watermark advancement mid-demo.
-            print("  [warn] publish failed; retrying next tick")
+            print("  [warn] publish failed; retrying next tick", flush=True)
         if args.heal and time.time() >= next_heal_check:
             # The check interval doubles as the recreate cooldown: at most
             # one delete+submit per HEAL_CHECK_EVERY_S, and only when the
@@ -179,10 +185,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(
                     "  [warn] heal check could not confirm RAG statement "
                     "healthy; will re-check in "
-                    f"{HEAL_CHECK_EVERY_S:.0f}s"
+                    f"{HEAL_CHECK_EVERY_S:.0f}s",
+                    flush=True,
                 )
         time.sleep(max(1.0, args.interval))
-    print("  HEARTBEAT done.")
+    print("  HEARTBEAT done.", flush=True)
     return rc
 
 
