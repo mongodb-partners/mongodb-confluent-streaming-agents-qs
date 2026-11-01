@@ -1,0 +1,40 @@
+---
+title: Streaming agents on Confluent Cloud and MongoDB Atlas
+---
+flowchart LR
+Rides["ride_requests<br/>Kafka topic"]
+subgraph flink[Confluent Cloud Flink SQL]
+Win["1-min window<br/>aggregation"]
+Det["ML_DETECT_ANOMALIES"]
+Agent["AI_RUN_AGENT<br/>dispatch decision"]
+Rag["RAG enrichment<br/>embed, vector search, LLM"]
+end
+subgraph tools[Tool and model access]
+MCP["MongoDB MCP Server<br/>AWS ECS"]
+Bedrock["AWS Bedrock<br/>LLM"]
+Voyage["Voyage AI<br/>embeddings"]
+end
+subgraph atlas[MongoDB Atlas]
+KB[("events.knowledge_base<br/>Vector Search")]
+Fleet[("fleet catalog and<br/>dispatch_log")]
+Anom[("zone_anomalies and<br/>zone_traffic")]
+ASP["Atlas Stream Processing"]
+end
+UI["Mission Control<br/>change stream UI"]
+Rides --> Win
+Win --> Det
+Det -->|Path B act| Agent
+Det -->|Path A explain| Rag
+Agent --> MCP
+MCP --> Fleet
+Agent --> Bedrock
+Rag --> Voyage
+Rag --> KB
+Rag --> Bedrock
+Det --> ASP
+Rag --> ASP
+Agent --> ASP
+ASP --> Anom
+ASP --> Fleet
+Anom --> UI
+Fleet --> UI
