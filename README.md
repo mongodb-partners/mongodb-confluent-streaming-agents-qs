@@ -21,6 +21,9 @@ No human approves these decisions. No hardcoded rules determine allocation. The 
 
 ## Pipeline Architecture
 
+![Architecture](docs/images/architecture.svg)
+
+
 ```
 ride_requests → [1-min window aggregation] → [ML_DETECT_ANOMALIES]
                                                       |
